@@ -10,7 +10,8 @@
   "scripts": {
     "build": "npx tsc",
     "start": "npx tsc && node --no-warnings dist/apps/pro/index.js",
-    "dev": "node --no-warnings --import tsx apps/pro/index.tsx"
+    "dev": "node --no-warnings --import tsx apps/pro/index.tsx",
+    "sync-free": "node scripts/sync-from-free.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

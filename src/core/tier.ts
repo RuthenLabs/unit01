@@ -124,7 +124,6 @@ export function getServiceToken(service: string): string | null {
       if (valToken) return valToken;
     } catch {}
   }
-
   try {
     const vaultPath = path.join(homedir(), '.unit01', 'vault.enc');
     if (fs.existsSync(vaultPath)) {
@@ -132,7 +131,6 @@ export function getServiceToken(service: string): string | null {
       return getCredential(service) || getCredential(`${service}-token`) || null;
     }
   } catch {}
-
   const conf = loadPlaintextConfig();
   return conf.tokens?.[service] || conf.tokens?.[`${service}-token`] || null;
 }

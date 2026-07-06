@@ -25,7 +25,7 @@ const commands = [
   '/models', '/thinking', '/status', '/usage', '/sessions',
   '/compact', '/clear', '/exit', '/quit',
   '/files', '/reindex', '/export', '/preview', '/changes',
-  '/undo', '/search', '/connect', '/audit', '/autopilot', '/reset-password', '/overkill', '/help',
+  '/undo', '/search', '/autopilot', '/reset-password', '/overkill', '/help',
 ];
 
 export function PromptInput({ onSubmit, status, disabled = false }: PromptInputProps) {
