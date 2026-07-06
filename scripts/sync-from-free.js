@@ -16,27 +16,43 @@ if (!fs.existsSync(freeRoot)) {
 console.log('🔄 Syncing core and shared CLI logic from free repository...');
 
 // Helper: copy directory recursively
-function copyDirRecursive(src, dest) {
-  if (fs.existsSync(dest)) {
-    fs.rmSync(dest, { recursive: true, force: true });
+function copyDirRecursive(src, dest, excludeNames = []) {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
   }
-  fs.mkdirSync(dest, { recursive: true });
-  const entries = fs.readdirSync(src, { withFileTypes: true });
 
-  for (const entry of entries) {
+  const srcEntries = fs.readdirSync(src, { withFileTypes: true });
+  const srcNames = new Set(srcEntries.map(e => e.name));
+
+  for (const entry of srcEntries) {
+    if (excludeNames.includes(entry.name)) {
+      continue;
+    }
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
+      copyDirRecursive(srcPath, destPath, excludeNames);
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
   }
+
+  // Clean up stale files in dest
+  const destEntries = fs.readdirSync(dest, { withFileTypes: true });
+  for (const entry of destEntries) {
+    if (excludeNames.includes(entry.name)) {
+      continue;
+    }
+    if (!srcNames.has(entry.name)) {
+      const destPath = path.join(dest, entry.name);
+      fs.rmSync(destPath, { recursive: true, force: true });
+    }
+  }
 }
 
-// 1. Sync src/core/ entirely
-console.log('  - Syncing src/core/ ...');
-copyDirRecursive(path.join(freeRoot, 'src/core'), path.join(proRoot, 'src/core'));
+// 1. Sync src/core/ entirely (excluding tier.ts)
+console.log('  - Syncing src/core/ (excluding tier.ts) ...');
+copyDirRecursive(path.join(freeRoot, 'src/core'), path.join(proRoot, 'src/core'), ['tier.ts']);
 
 // 2. Sync src/types.d.ts
 console.log('  - Syncing src/types.d.ts ...');

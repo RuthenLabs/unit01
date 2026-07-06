@@ -3,8 +3,7 @@
  *
  * Single source of truth for free vs. pro tier detection.
  * Pro is active when the user has a 'pro-license' token in their keychain/vault,
- * OR when they have any premium search API key (Tavily, Exa, Jina, Serper) — same
- * gate that search.ts already uses, extracted here so every module shares one check.
+ * OR when they have any premium search API key (Tavily, Exa, Jina, Serper).
  */
 
 import * as path from 'path';
@@ -47,9 +46,6 @@ export function deletePlaintextToken(service: string): void {
 
 let _cachedIsPro: boolean | null = null;
 
-/**
- * Returns true if the current session is running in Pro mode.
- */
 export function isPro(): boolean {
   if (_cachedIsPro !== null) return _cachedIsPro;
 
@@ -98,9 +94,6 @@ export function isPro(): boolean {
   return false;
 }
 
-/**
- * Resolves a service token. Free users get plaintext config, Pro users get Keychain/Vault.
- */
 export function getServiceToken(service: string): string | null {
   if (!isPro()) {
     const conf = loadPlaintextConfig();
@@ -124,6 +117,7 @@ export function getServiceToken(service: string): string | null {
       if (valToken) return valToken;
     } catch {}
   }
+
   try {
     const vaultPath = path.join(homedir(), '.unit01', 'vault.enc');
     if (fs.existsSync(vaultPath)) {
@@ -131,15 +125,13 @@ export function getServiceToken(service: string): string | null {
       return getCredential(service) || getCredential(`${service}-token`) || null;
     }
   } catch {}
+
   const conf = loadPlaintextConfig();
   return conf.tokens?.[service] || conf.tokens?.[`${service}-token`] || null;
 }
 
-/** Limits applied to free tier users */
 export const FREE_LIMITS = {
-  MEMORY_DECISIONS:   3,   // max decisions shown in context
-  MEMORY_CONVENTIONS: 5,   // max conventions shown in context
-  AUTOPILOT_ITERATIONS: 1, // max self-heal iterations
-  SEARCH_PER_DAY: 11,      // already enforced in search.ts
-} as const;
-
+  MEMORY_DECISIONS:   3,
+  MEMORY_CONVENTIONS: 5,
+  AUTOPILOT_ITERATIONS: 1,
+};
