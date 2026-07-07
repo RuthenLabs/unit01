@@ -9,6 +9,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 
 const CONFIG_DIR = path.join(homedir(), '.unit01');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
@@ -48,6 +49,16 @@ let _cachedIsPro: boolean | null = null;
 
 export function isPro(): boolean {
   if (_cachedIsPro !== null) return _cachedIsPro;
+
+  try {
+    const filename = fileURLToPath(import.meta.url);
+    const dirname = path.dirname(filename);
+    const proPath = path.join(dirname, '../pro');
+    if (fs.existsSync(proPath)) {
+      _cachedIsPro = true;
+      return true;
+    }
+  } catch (_) {}
 
   if (process.env.UNIT01_PRO === '1' || process.env.UNIT01_PRO === 'true') {
     _cachedIsPro = true;
