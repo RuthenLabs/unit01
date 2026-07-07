@@ -10,6 +10,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 const CONFIG_DIR = path.join(homedir(), '.unit01');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
@@ -114,17 +117,17 @@ export function getServiceToken(service: string): string | null {
   if (process.platform === 'darwin') {
     try {
       const { execSync } = require('child_process');
-      const val = execSync(`security find-generic-password -s "${service}" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const val = execSync(`security find-generic-password -a unit01 -s "unit01-${service}" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (val) return val;
-      const valToken = execSync(`security find-generic-password -s "${service}-token" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const valToken = execSync(`security find-generic-password -a unit01 -s "unit01-${service}-token" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (valToken) return valToken;
     } catch {}
   } else if (process.platform === 'linux') {
     try {
       const { execSync } = require('child_process');
-      const val = execSync(`secret-tool lookup service ${service} 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const val = execSync(`secret-tool lookup application unit01 service ${service} 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (val) return val;
-      const valToken = execSync(`secret-tool lookup service ${service}-token 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const valToken = execSync(`secret-tool lookup application unit01 service ${service}-token 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (valToken) return valToken;
     } catch {}
   }
@@ -146,9 +149,9 @@ export function isServiceConnected(service: string): boolean {
   if (process.platform === 'darwin') {
     try {
       const { execSync } = require('child_process');
-      const val = execSync(`security find-generic-password -s "${service}" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const val = execSync(`security find-generic-password -a unit01 -s "unit01-${service}" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (val) return true;
-      const valToken = execSync(`security find-generic-password -s "${service}-token" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const valToken = execSync(`security find-generic-password -a unit01 -s "unit01-${service}-token" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (valToken) return true;
     } catch {}
   }
@@ -157,9 +160,9 @@ export function isServiceConnected(service: string): boolean {
   if (process.platform === 'linux') {
     try {
       const { execSync } = require('child_process');
-      const val = execSync(`secret-tool lookup service ${service} 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const val = execSync(`secret-tool lookup application unit01 service ${service} 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (val) return true;
-      const valToken = execSync(`secret-tool lookup service ${service}-token 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      const valToken = execSync(`secret-tool lookup application unit01 service ${service}-token 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
       if (valToken) return true;
     } catch {}
   }
