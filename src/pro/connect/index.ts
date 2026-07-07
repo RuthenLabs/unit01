@@ -8,6 +8,7 @@ import {
   deleteFromSecretTool
 } from './keychain.js';
 import { saveCredential, getCredential, deleteCredential, vaultExists } from './vault.js';
+import { deletePlaintextToken } from '../../core/tier.js';
 
 /**
  * Perform a test query against the service API to validate the token.
@@ -157,6 +158,9 @@ export function disconnectService(service: string): void {
       deleteCredential(service);
     } catch (_) {}
   }
+  try {
+    deletePlaintextToken(service);
+  } catch (_) {}
 }
 
 export { isSecretToolAvailable } from './keychain.js';
