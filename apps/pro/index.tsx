@@ -1972,7 +1972,7 @@ ${toolLines.join('\n')}\n`);
             return;
           }
         } else {
-          const { isPro, getServiceToken } = await import('../../src/core/tier.js');
+          const { isPro, isServiceConnected } = await import('../../src/core/tier.js');
 
           const serviceOptions = [
             { id: 'tavily', label: 'Tavily (Web Search)' },
@@ -1986,8 +1986,8 @@ ${toolLines.join('\n')}\n`);
 
           // Build menu options: show (Connected) for active ones
           const options = serviceOptions.map(opt => {
-            const activeToken = getServiceToken(opt.id);
-            const statusSuffix = activeToken ? chalk.hex('#10B981')(' (Connected)') : '';
+            const connected = isServiceConnected(opt.id);
+            const statusSuffix = connected ? chalk.hex('#10B981')(' (Connected)') : '';
             return `${opt.label}${statusSuffix}`;
           });
           options.push('Disconnect Service');
@@ -1997,7 +1997,7 @@ ${toolLines.join('\n')}\n`);
 
           // Handle Disconnect Service option (last option in the list)
           if (choiceIdx === options.length - 1) {
-            const activeServices = serviceOptions.filter(opt => getServiceToken(opt.id) !== null);
+            const activeServices = serviceOptions.filter(opt => isServiceConnected(opt.id));
 
             if (activeServices.length === 0) {
               ui.printSystemMessage('info', 'No active services to disconnect.');
@@ -2027,8 +2027,7 @@ ${toolLines.join('\n')}\n`);
 
           // Handle normal service connection selection
           const selectedOpt = serviceOptions[choiceIdx];
-          const existingToken = getServiceToken(selectedOpt.id);
-          if (existingToken) {
+          if (isServiceConnected(selectedOpt.id)) {
             ui.printSystemMessage('error', `Service "${selectedOpt.id}" is already connected. Please disconnect it first before entering a new token.`);
             return;
           }
