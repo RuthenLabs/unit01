@@ -1133,18 +1133,29 @@ ${activeChanges}`;
         const divider = themeBorder('────────────────────────────────────────');
 
         const helpItems = [
-          { cmd: '/models',   desc: 'switch the active model' },
-          { cmd: '/thinking', desc: 'toggle reasoning blocks' },
-          { cmd: '/status',   desc: 'system info' },
-          { cmd: '/usage',    desc: 'context window usage' },
-          { cmd: '/sessions', desc: 'browse saved sessions' },
-          { cmd: '/compact',  desc: 'save task checkpoint' },
-          { cmd: '/connect',  desc: 'list integrations (github, slack, discord...)' },
-          { cmd: '/mcp',      desc: 'manage MCP servers · /mcp add · /mcp reload · /mcp remove' },
-          { cmd: '/overkill', desc: 'audit code modifications for over-engineering' },
-          { cmd: '/clear',    desc: 'clear conversation' },
-          { cmd: '/export',   desc: 'export session' },
-          { cmd: '/help',     desc: 'show this menu' }
+          { cmd: '/audit',       desc: 'view recent activity audit logs' },
+          { cmd: '/autopilot',   desc: 'toggle autopilot mode (plan-code-test-heal loop)' },
+          { cmd: '/changes',     desc: 'show recent file changes in the session' },
+          { cmd: '/clear',       desc: 'clear conversation history' },
+          { cmd: '/compact',     desc: 'save task checkpoint to compact history' },
+          { cmd: '/connect',     desc: 'manage integrations (GitHub, Slack, etc.)' },
+          { cmd: '/exit, /quit', desc: 'exit the CLI' },
+          { cmd: '/export',      desc: 'export session transcript to Markdown' },
+          { cmd: '/files',       desc: 'list all indexed files' },
+          { cmd: '/help',        desc: 'show this menu' },
+          { cmd: '/mcp',         desc: 'manage MCP servers (add, reload, remove)' },
+          { cmd: '/models',      desc: 'switch the active model' },
+          { cmd: '/overkill',    desc: 'run overkill audit on recent changes' },
+          { cmd: '/personality', desc: 'switch assistant personality / tone' },
+          { cmd: '/preview',     desc: 'preview last file changes (diff format)' },
+          { cmd: '/reindex',     desc: 're-scan workspace and rebuild file index' },
+          { cmd: '/reset-password', desc: 'reset the master password of the credentials vault' },
+          { cmd: '/search',      desc: 'search the codebase' },
+          { cmd: '/sessions',    desc: 'browse and manage saved sessions' },
+          { cmd: '/status',      desc: 'show system status info' },
+          { cmd: '/thinking',    desc: 'toggle model reasoning blocks' },
+          { cmd: '/undo',        desc: 'revert the last file write' },
+          { cmd: '/usage',       desc: 'show context window token usage' }
         ];
 
         const out = [
@@ -1153,7 +1164,7 @@ ${activeChanges}`;
           `  ${headerLine}`,
           `  ${divider}`,
           ...helpItems.map(item => {
-            const cmdColored = chalk.hex('#C084FC')(item.cmd.padEnd(14));
+            const cmdColored = chalk.hex('#C084FC')(item.cmd.padEnd(16));
             const descColored = chalk.hex('#64748B')(item.desc);
             return `  ${cmdColored}${descColored}`;
           }),

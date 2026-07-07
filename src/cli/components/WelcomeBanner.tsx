@@ -62,30 +62,8 @@ export function WelcomeBanner({
       
       <Box marginTop={1}>
         <Text>{padding}</Text>
-        <Text bold color="#F1F5F9">unit01</Text>
+        <Text bold color="#F1F5F9">UNIT01</Text>
       </Box>
-      <Box>
-        <Text>{padding}</Text>
-        <Text color="#475569">local-first coding agent, zero cloud calls</Text>
-      </Box>
-
-      <Box marginTop={1}>
-        <Text>{padding}</Text>
-        <Text bold color="#22D3EE">$ </Text>
-        <Text color="#F1F5F9">unit01 ~ booting local engine... </Text>
-        <Text bold color="#22D3EE">ready.</Text>
-      </Box>
-
-      {latestSession && (
-        <Box marginTop={1}>
-          <Text>
-            {'  '}
-            <Text color="#475569">
-              ⤿ Last session {latestSession.relTime} · "{latestSession.label}"
-            </Text>
-          </Text>
-        </Box>
-      )}
     </Box>
   );
 }

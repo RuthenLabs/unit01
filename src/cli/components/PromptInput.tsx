@@ -22,10 +22,11 @@ const inputHistory: string[] = [];
 const MAX_HISTORY = 50;
 
 const commands = [
-  '/models', '/thinking', '/status', '/usage', '/sessions',
-  '/compact', '/clear', '/exit', '/quit',
-  '/files', '/reindex', '/export', '/preview', '/changes',
-  '/undo', '/search', '/autopilot', '/reset-password', '/overkill', '/help',
+  '/audit', '/autopilot', '/changes', '/clear', '/compact', '/connect',
+  '/exit', '/export', '/files', '/help', '/mcp',
+  '/models', '/overkill', '/personality', '/preview', '/quit',
+  '/reindex', '/reset-password', '/search', '/sessions', '/status',
+  '/thinking', '/undo'
 ];
 
 export function PromptInput({ onSubmit, status, disabled = false }: PromptInputProps) {
