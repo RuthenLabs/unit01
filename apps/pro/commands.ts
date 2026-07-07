@@ -118,7 +118,7 @@ export async function handleToolCalls(
       'delete_file', 'list_dir', 'search_code', 'web_search', 'view_outline',
       'ask_user', 'move_file', 'git_status', 'diagnostics',
       'sandbox_exec', 'question', 'path_question', 'mcp_tool',
-      'github_get_pr', 'github_create_issue', 'github_create_pr',
+      'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos',
       'slack_get_history', 'slack_post_message',
       'discord_get_history', 'discord_post_message',
       'notion_get_page', 'notion_append_blocks',
@@ -1631,7 +1631,7 @@ export async function handleToolCalls(
 
   // ── Native Integration Tools ──
   const integrations = [
-    'github_get_pr', 'github_create_issue', 'github_create_pr',
+    'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos',
     'slack_get_history', 'slack_post_message',
     'discord_get_history', 'discord_post_message',
     'notion_get_page', 'notion_append_blocks',
@@ -1674,6 +1674,12 @@ export async function handleToolCalls(
     try {
       let output = '';
       switch (matchedTag) {
+        case 'github_list_repos': {
+          const { fetchGitHubRepos } = await import('../../src/pro/connect/integrations/github.js');
+          const repos = await fetchGitHubRepos();
+          output = JSON.stringify(repos, null, 2);
+          break;
+        }
         case 'github_get_pr': {
           const owner = getAttr('github_get_pr', 'owner');
           const repo = getAttr('github_get_pr', 'repo');

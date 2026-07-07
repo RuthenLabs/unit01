@@ -103,3 +103,40 @@ export async function fetchGitHubPullRequest(owner: string, repo: string, pullNu
   }
   return await response.json();
 }
+
+/**
+ * List the authenticated user's repositories.
+ */
+export async function fetchGitHubRepos(): Promise<any> {
+  const token = getGitHubToken();
+  if (!token) throw new Error('GitHub is not connected. Use /connect github first.');
+
+  const response = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'Authorization': `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28'
+    }
+  });
+
+  if (response.status === 401) {
+    disconnectService('github');
+    disconnectService('github-token');
+    throw new Error('[Authentication Error] Stored token for github is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect github" to re-authenticate.');
+  }
+
+  if (!response.ok) {
+    throw new Error(`GitHub API error: Status ${response.status}`);
+  }
+  
+  const repos = await response.json();
+  return repos.map((r: any) => ({
+    name: r.name,
+    full_name: r.full_name,
+    description: r.description,
+    html_url: r.html_url,
+    private: r.private,
+    updated_at: r.updated_at
+  }));
+}
