@@ -130,7 +130,7 @@ export function getServiceToken(service: string): string | null {
   }
 
   try {
-    const vaultPath = path.join(homedir(), '.unit01', 'vault.enc');
+    const vaultPath = path.join(homedir(), '.unit01', 'credentials.json');
     if (fs.existsSync(vaultPath)) {
       const { getCredential } = require('../pro/connect/vault.js');
       return getCredential(service) || getCredential(`${service}-token`) || null;
@@ -139,6 +139,48 @@ export function getServiceToken(service: string): string | null {
 
   const conf = loadPlaintextConfig();
   return conf.tokens?.[service] || conf.tokens?.[`${service}-token`] || null;
+}
+
+export function isServiceConnected(service: string): boolean {
+  // 1. Check macOS Keychain
+  if (process.platform === 'darwin') {
+    try {
+      const { execSync } = require('child_process');
+      const val = execSync(`security find-generic-password -s "${service}" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      if (val) return true;
+      const valToken = execSync(`security find-generic-password -s "${service}-token" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      if (valToken) return true;
+    } catch {}
+  }
+
+  // 2. Check Linux Secret Service
+  if (process.platform === 'linux') {
+    try {
+      const { execSync } = require('child_process');
+      const val = execSync(`secret-tool lookup service ${service} 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      if (val) return true;
+      const valToken = execSync(`secret-tool lookup service ${service}-token 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
+      if (valToken) return true;
+    } catch {}
+  }
+
+  // 3. Check local encrypted Vault (credentials.json) without unlocking it
+  try {
+    const vaultPath = path.join(homedir(), '.unit01', 'credentials.json');
+    if (fs.existsSync(vaultPath)) {
+      const data = JSON.parse(fs.readFileSync(vaultPath, 'utf-8'));
+      if (data && data.credentials) {
+        if (data.credentials[service] !== undefined || data.credentials[`${service}-token`] !== undefined) {
+          return true;
+        }
+      }
+    }
+  } catch {}
+
+  // 4. Check plaintext config
+  const conf = loadPlaintextConfig();
+  const plainToken = conf.tokens?.[service] || conf.tokens?.[`${service}-token`] || null;
+  return plainToken !== null && plainToken.trim().length > 0;
 }
 
 export const FREE_LIMITS = {
