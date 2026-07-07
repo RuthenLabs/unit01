@@ -941,36 +941,7 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
         return;
       }
 
-      if (command === '/connect') {
-        const headerLine = chalk.hex('#C084FC')('◈ unit01  ·  connect');
-        const divider = themeBorder('────────────────────────────────────────');
 
-        const integrations = [
-          { name: 'github',   desc: 'push commits, open PRs, create issues' },
-          { name: 'slack',    desc: 'post messages to channels' },
-          { name: 'discord',  desc: 'send messages to a Discord server' },
-          { name: 'notion',   desc: 'create and update Notion pages' },
-          { name: 'telegram', desc: 'send messages via Telegram bot' },
-        ];
-
-        const out = [
-          '',
-          `  ${divider}`,
-          `  ${headerLine}`,
-          `  ${divider}`,
-          ...integrations.map(int => {
-            const nameColored = chalk.hex('#C084FC')(int.name.padEnd(12));
-            const descColored = chalk.hex('#64748B')(int.desc);
-            return `  ${nameColored}${descColored}`;
-          }),
-          '',
-          `  ${chalk.hex('#64748B')('Use /connect <name> to configure an integration')}`,
-          ''
-        ].join('\n');
-
-        ui.addTextOutput(out);
-        return;
-      }
 
       if (command === '/overkill') {
         const activeChanges = indexer.getRecentChanges();
