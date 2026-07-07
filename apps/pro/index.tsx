@@ -1972,35 +1972,46 @@ ${toolLines.join('\n')}\n`);
             return;
           }
         } else {
-          const options = [
-            'Tavily (Web Search)',
-            'Exa (Web Search)',
-            'Jina (Web Search)',
-            'Serper (Web Search)',
-            'GitHub API Integration',
-            'Slack Webhook Integration',
-            'Notion Database Integration',
-            'Disconnect Service'
+          const { isPro, getServiceToken } = await import('../../src/core/tier.js');
+
+          const serviceOptions = [
+            { id: 'tavily', label: 'Tavily (Web Search)' },
+            { id: 'exa',    label: 'Exa (Web Search)' },
+            { id: 'jina',   label: 'Jina (Web Search)' },
+            { id: 'serper', label: 'Serper (Web Search)' },
+            { id: 'github', label: 'GitHub API Integration' },
+            { id: 'slack',  label: 'Slack Webhook Integration' },
+            { id: 'notion', label: 'Notion Database Integration' }
           ];
+
+          // Build menu options: show (Connected) for active ones
+          const options = serviceOptions.map(opt => {
+            const activeToken = getServiceToken(opt.id);
+            const statusSuffix = activeToken ? chalk.hex('#10B981')(' (Connected)') : '';
+            return `${opt.label}${statusSuffix}`;
+          });
+          options.push('Disconnect Service');
+
           const choiceIdx = await ui.interactiveSelect('Select Service to Connect:', options);
           if (choiceIdx === -1) return;
 
-          if (choiceIdx === 7) {
-            const disconnectOptions = [
-              'tavily',
-              'exa',
-              'jina',
-              'serper',
-              'github',
-              'slack',
-              'notion'
-            ];
-            const selectDisconnectIdx = await ui.interactiveSelect('Select Service to Disconnect:', disconnectOptions);
+          // Handle Disconnect Service option (last option in the list)
+          if (choiceIdx === options.length - 1) {
+            const activeServices = serviceOptions.filter(opt => getServiceToken(opt.id) !== null);
+
+            if (activeServices.length === 0) {
+              ui.printSystemMessage('info', 'No active services to disconnect.');
+              return;
+            }
+
+            const disconnectLabels = activeServices.map(opt => opt.label);
+            const selectDisconnectIdx = await ui.interactiveSelect('Select Service to Disconnect:', disconnectLabels);
             if (selectDisconnectIdx === -1) return;
-            const targetService = disconnectOptions[selectDisconnectIdx];
+
+            const targetService = activeServices[selectDisconnectIdx].id;
             try {
-              const { isPro, deletePlaintextToken } = await import('../../src/core/tier.js');
               if (!isPro()) {
+                const { deletePlaintextToken } = await import('../../src/core/tier.js');
                 deletePlaintextToken(targetService);
                 ui.printSystemMessage('info', `Disconnected credentials for service: ${targetService}`);
                 return;
@@ -2014,10 +2025,16 @@ ${toolLines.join('\n')}\n`);
             return;
           }
 
-          const serviceNames = ['tavily', 'exa', 'jina', 'serper', 'github', 'slack', 'notion'];
-          service = serviceNames[choiceIdx];
+          // Handle normal service connection selection
+          const selectedOpt = serviceOptions[choiceIdx];
+          const existingToken = getServiceToken(selectedOpt.id);
+          if (existingToken) {
+            ui.printSystemMessage('error', `Service "${selectedOpt.id}" is already connected. Please disconnect it first before entering a new token.`);
+            return;
+          }
 
-          const inputPrompt = `Enter API Token/Key for ${options[choiceIdx]}:`;
+          service = selectedOpt.id;
+          const inputPrompt = `Enter API Token/Key for ${selectedOpt.label}:`;
           token = await ui.interactiveInput(inputPrompt);
           if (!token || token.trim().length === 0) {
             ui.printSystemMessage('error', 'API Token/Key cannot be empty.');
