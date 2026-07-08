@@ -1638,7 +1638,9 @@ export async function handleToolCalls(
     'telegram_get_updates', 'telegram_post_message'
   ];
 
-  const matchedTag = integrations.find(tag => text.includes(`<${tag}`));
+  const tagMatch = text.match(/<([a-zA-Z0-9_]+)\b/);
+  const tagName = tagMatch ? tagMatch[1] : '';
+  const matchedTag = integrations.includes(tagName) ? tagName : undefined;
   if (matchedTag) {
     const isWrite = [
       'github_create_issue', 'github_create_pr',
