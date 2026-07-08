@@ -1638,9 +1638,8 @@ export async function handleToolCalls(
     'telegram_get_updates', 'telegram_post_message'
   ];
 
-  const tagMatch = text.match(/<([a-zA-Z0-9_]+)\b/);
-  const tagName = tagMatch ? tagMatch[1] : '';
-  const matchedTag = integrations.includes(tagName) ? tagName : undefined;
+  const matches = [...text.matchAll(/<([a-zA-Z0-9_]+)\b/g)];
+  const matchedTag = integrations.find(tag => matches.some(m => m[1] === tag));
   if (matchedTag) {
     const isWrite = [
       'github_create_issue', 'github_create_pr', 'github_rename_repo',
