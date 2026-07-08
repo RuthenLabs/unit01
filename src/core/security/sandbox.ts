@@ -473,7 +473,7 @@ export class DirectiveSandbox {
         word = word.slice(1, -1);
       }
       
-      if (word.startsWith('-') || word.startsWith('/') || keywords.has(word)) {
+      if (word.startsWith('-') || word.startsWith('/') || keywords.has(word) || word.startsWith('http://') || word.startsWith('https://')) {
         return part;
       }
       
