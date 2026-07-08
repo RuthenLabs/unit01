@@ -118,7 +118,7 @@ export async function handleToolCalls(
       'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics',
       'move_file', 'think', 'question', 'path_question',
       'delete_file', 'view_outline', 'ask_user', 'make_dir', 'copy_file',
-      'mcp_tool', 'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents',
+      'mcp_tool', 'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents', 'github_rename_repo',
       'slack_get_history', 'slack_post_message',
       'discord_get_history', 'discord_post_message',
       'notion_get_page', 'notion_append_blocks',
@@ -1631,7 +1631,7 @@ export async function handleToolCalls(
 
   // ── Native Integration Tools ──
   const integrations = [
-    'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents',
+    'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents', 'github_rename_repo',
     'slack_get_history', 'slack_post_message',
     'discord_get_history', 'discord_post_message',
     'notion_get_page', 'notion_append_blocks',
@@ -1643,7 +1643,7 @@ export async function handleToolCalls(
   const matchedTag = integrations.includes(tagName) ? tagName : undefined;
   if (matchedTag) {
     const isWrite = [
-      'github_create_issue', 'github_create_pr',
+      'github_create_issue', 'github_create_pr', 'github_rename_repo',
       'slack_post_message', 'discord_post_message',
       'notion_append_blocks', 'telegram_post_message'
     ].includes(matchedTag);
@@ -1676,6 +1676,15 @@ export async function handleToolCalls(
     try {
       let output = '';
       switch (matchedTag) {
+        case 'github_rename_repo': {
+          const owner = getAttr('github_rename_repo', 'owner');
+          const repo = getAttr('github_rename_repo', 'repo');
+          const newName = getAttr('github_rename_repo', 'new_name');
+          const { renameGitHubRepo } = await import('../../src/pro/connect/integrations/github.js');
+          const result = await renameGitHubRepo(owner, repo, newName);
+          output = JSON.stringify(result, null, 2);
+          break;
+        }
         case 'github_get_contents': {
           const owner = getAttr('github_get_contents', 'owner');
           const repo = getAttr('github_get_contents', 'repo');

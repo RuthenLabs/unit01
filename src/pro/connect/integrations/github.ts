@@ -190,3 +190,34 @@ export async function fetchGitHubContents(owner: string, repo: string, pathStr: 
   }
   return data;
 }
+
+/**
+ * Rename a GitHub repository.
+ */
+export async function renameGitHubRepo(owner: string, repo: string, newName: string): Promise<any> {
+  const token = getGitHubToken();
+  if (!token) throw new Error('GitHub is not connected. Use /connect github first.');
+
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+    method: 'PATCH',
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'Authorization': `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ name: newName })
+  });
+
+  if (response.status === 401) {
+    disconnectService('github');
+    disconnectService('github-token');
+    throw new Error('[Authentication Error] Stored token for github is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect github" to re-authenticate.');
+  }
+
+  if (!response.ok) {
+    const errorDetails = await response.text();
+    throw new Error(`GitHub Rename API error: Status ${response.status} - ${errorDetails}`);
+  }
+  return await response.json();
+}
