@@ -374,6 +374,7 @@ TOOLS (use exactly as shown — real paths, not placeholders):
 <mcp_tool server="server-id" name="tool-name">{"arg": "value"}</mcp_tool>
 <github_get_pr owner="owner" repo="repo" number="123" />
 <github_list_repos />
+<github_get_contents owner="owner" repo="repo" path="path" />
 <github_create_issue owner="owner" repo="repo" title="title">body</github_create_issue>
 <github_create_pr owner="owner" repo="repo" title="title" head="head" base="base">body</github_create_pr>
 <slack_get_history channel="C123" limit="10" />

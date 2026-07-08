@@ -418,7 +418,7 @@ export function validateToolCall(tagName: string, attributesStr: string): string
     'move_file', 'think', 'question', 'path_question',
     'delete_file', 'view_outline', 'ask_user', 'make_dir', 'copy_file',
     'mcp_tool', 'github_get_pr', 'github_create_issue', 'github_create_pr',
-    'github_list_repos', 'slack_get_history', 'slack_post_message',
+    'github_list_repos', 'github_get_contents', 'slack_get_history', 'slack_post_message',
     'discord_get_history', 'discord_post_message', 'notion_get_page',
     'notion_append_blocks', 'telegram_get_updates', 'telegram_post_message'
   ]).has(tagName);

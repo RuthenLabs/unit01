@@ -114,11 +114,11 @@ export async function handleToolCalls(
     
     // Check if tag is a tool
     const isTool = [
-      'run_command', 'read_file', 'write_file', 'patch_file', 'patch_file_blocks',
-      'delete_file', 'list_dir', 'search_code', 'web_search', 'view_outline',
-      'ask_user', 'move_file', 'git_status', 'diagnostics',
-      'sandbox_exec', 'question', 'path_question', 'mcp_tool',
-      'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos',
+      'run_command', 'read_file', 'write_file', 'search_code', 'web_search',
+      'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics',
+      'move_file', 'think', 'question', 'path_question',
+      'delete_file', 'view_outline', 'ask_user', 'make_dir', 'copy_file',
+      'mcp_tool', 'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents',
       'slack_get_history', 'slack_post_message',
       'discord_get_history', 'discord_post_message',
       'notion_get_page', 'notion_append_blocks',
@@ -1631,7 +1631,7 @@ export async function handleToolCalls(
 
   // ── Native Integration Tools ──
   const integrations = [
-    'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos',
+    'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents',
     'slack_get_history', 'slack_post_message',
     'discord_get_history', 'discord_post_message',
     'notion_get_page', 'notion_append_blocks',
@@ -1676,6 +1676,15 @@ export async function handleToolCalls(
     try {
       let output = '';
       switch (matchedTag) {
+        case 'github_get_contents': {
+          const owner = getAttr('github_get_contents', 'owner');
+          const repo = getAttr('github_get_contents', 'repo');
+          const pathStr = getAttr('github_get_contents', 'path');
+          const { fetchGitHubContents } = await import('../../src/pro/connect/integrations/github.js');
+          const contents = await fetchGitHubContents(owner, repo, pathStr);
+          output = typeof contents === 'string' ? contents : JSON.stringify(contents, null, 2);
+          break;
+        }
         case 'github_list_repos': {
           const { fetchGitHubRepos } = await import('../../src/pro/connect/integrations/github.js');
           const repos = await fetchGitHubRepos();
