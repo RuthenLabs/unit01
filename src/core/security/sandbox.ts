@@ -473,7 +473,9 @@ export class DirectiveSandbox {
         word = word.slice(1, -1);
       }
       
-      if (word.startsWith('-') || word.startsWith('/') || keywords.has(word) || word.startsWith('http://') || word.startsWith('https://')) {
+      const isUri = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(word);
+      const isSsh = /^[a-zA-Z0-9_-]+@[a-zA-Z0-9.-]+:/.test(word);
+      if (word.startsWith('-') || word.startsWith('/') || keywords.has(word) || isUri || isSsh) {
         return part;
       }
       
