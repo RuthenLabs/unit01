@@ -21,7 +21,7 @@ export class ShadowBackupManager {
     if (!fs.existsSync(absolutePath)) {
       // If the file is newly created, we still store its path so /undo can delete it!
       const pathHash = getPathHash(absolutePath);
-      this.db.upsertBackup({
+      this.db.pushBackup({
         path_hash: pathHash,
         original_path: absolutePath,
         content: '__NEW_FILE__' // special sentinel indicating file didn't exist
@@ -32,7 +32,7 @@ export class ShadowBackupManager {
     try {
       const content = fs.readFileSync(absolutePath, 'utf-8');
       const pathHash = getPathHash(absolutePath);
-      this.db.upsertBackup({
+      this.db.pushBackup({
         path_hash: pathHash,
         original_path: absolutePath,
         content
@@ -47,7 +47,8 @@ export class ShadowBackupManager {
    */
   public restoreBackup(absolutePath: string): boolean {
     const pathHash = getPathHash(absolutePath);
-    const backup = this.db.getBackup(pathHash);
+    // Pop the latest version from the stack
+    const backup = this.db.popBackup(pathHash);
     
     if (!backup) {
       return false;
@@ -67,7 +68,8 @@ export class ShadowBackupManager {
       } else {
         fs.writeFileSync(absolutePath, backup.content, 'utf-8');
       }
-      this.db.removeBackup(pathHash);
+      // NOTE: do NOT call db.removeBackup here — popBackup already removed this version.
+      // Remaining older versions stay on the stack for further /undo calls.
       return true;
     } catch (err) {
       console.error(`Failed to restore backup for ${absolutePath}:`, err);

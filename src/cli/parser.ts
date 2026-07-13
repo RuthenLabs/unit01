@@ -112,8 +112,21 @@ export function parseSearchCode(text: string): string | null {
 }
 
 export function parseWebSearch(text: string): string | null {
-  // Require closing tag — prevents conversational mentions from firing
-  const tagMatch = /<web_search\s*>([\s\S]*?)<\/web_search>/.exec(text);
+  // Allow unclosed tag or end of string, matching what qwen3.5:2b generates
+  const tagMatch = /<web_search\s*>([\s\S]*?)(?:<\/web_search>|$)/.exec(text);
+  if (tagMatch) {
+    let query = tagMatch[1].trim();
+    // Strip any "query:" or "query: " prefix that the model might generate
+    if (query.toLowerCase().startsWith('query:')) {
+      query = query.substring(6).trim();
+    }
+    return query || null;
+  }
+  return null;
+}
+
+export function parseFetchWebpage(text: string): string | null {
+  const tagMatch = /<fetch_webpage\s*>([\s\S]*?)(?:<\/fetch_webpage>|$)/.exec(text);
   if (tagMatch) {
     return tagMatch[1].trim();
   }
@@ -647,15 +660,55 @@ export function applySearchReplaceBlocks(content: string, blocksStr: string): st
       const normIndex = normalizedContent.indexOf(normalizedSearch);
       
       if (normIndex === -1) {
-        throw {
-          message: `Could not find ORIGINAL block ${i + 1} in the file. Indentation and whitespace must match exactly.`,
-          code: "PATCH_BLOCK_NOT_FOUND",
-          blockIndex: i + 1,
-          blockSearch: block.search
-        };
+        // ── Fuzzy fallback: strip leading whitespace per-line and try again ──
+        // Handles the common case where the model regenerates code with slightly
+        // wrong indentation (e.g. 2 spaces vs 4 spaces, tabs vs spaces).
+        const trimLines = (s: string) => s.split('\n').map(l => l.trimStart()).join('\n');
+        const trimmedSearch = trimLines(normalizedSearch);
+        const trimmedContent = trimLines(normalizedContent);
+        const trimIndex = trimmedContent.indexOf(trimmedSearch);
+
+        if (trimIndex === -1) {
+          throw {
+            message: `Could not find ORIGINAL block ${i + 1} in the file. Indentation and whitespace must match exactly.`,
+            code: "PATCH_BLOCK_NOT_FOUND",
+            blockIndex: i + 1,
+            blockSearch: block.search
+          };
+        }
+
+        // Apply patch against the original (non-trimmed) content by mapping the
+        // trimmed match position back to the original content.
+        // Strategy: find the line number where the match starts in trimmed content,
+        // then locate the same span in the original normalized content.
+        const trimmedLines = trimmedContent.split('\n');
+        const searchTrimmedLines = trimmedSearch.split('\n');
+        let lineStart = -1;
+        outer: for (let li = 0; li <= trimmedLines.length - searchTrimmedLines.length; li++) {
+          for (let si = 0; si < searchTrimmedLines.length; si++) {
+            if (trimmedLines[li + si] !== searchTrimmedLines[si]) continue outer;
+          }
+          lineStart = li;
+          break;
+        }
+
+        if (lineStart === -1) {
+          throw {
+            message: `Could not find ORIGINAL block ${i + 1} in the file (fuzzy fallback failed).`,
+            code: "PATCH_BLOCK_NOT_FOUND",
+            blockIndex: i + 1,
+            blockSearch: block.search
+          };
+        }
+
+        // Reconstruct from original lines, replacing the matched span
+        const origLines = normalizedContent.split('\n');
+        const before = origLines.slice(0, lineStart).join('\n');
+        const after = origLines.slice(lineStart + searchTrimmedLines.length).join('\n');
+        updated = [before, block.replace, after].filter((s, idx) => idx === 1 || s !== '').join('\n');
+      } else {
+        updated = normalizedContent.slice(0, normIndex) + block.replace + normalizedContent.slice(normIndex + normalizedSearch.length);
       }
-      
-      updated = normalizedContent.slice(0, normIndex) + block.replace + normalizedContent.slice(normIndex + normalizedSearch.length);
     } else {
       updated = updated.slice(0, index) + block.replace + updated.slice(index + block.search.length);
     }

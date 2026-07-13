@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import ignore from 'ignore';
 import { IndexerDB, ChunkRecord } from '../database/db.js';
 
 // Rough token estimation: 4 characters per token
@@ -9,6 +10,13 @@ const IGNORE_DIRS = ['node_modules', '.git', 'dist', 'target', '__pycache__', '.
 
 function getSubdirectories(workspaceRoot: string): string[] {
   const dirs: string[] = [];
+  const ig = ignore().add(IGNORE_DIRS);
+  const gitignorePath = path.join(workspaceRoot, '.gitignore');
+  if (fs.existsSync(gitignorePath)) {
+    try {
+      ig.add(fs.readFileSync(gitignorePath, 'utf-8'));
+    } catch {}
+  }
   
   function walk(current: string, depth: number) {
     if (depth > 3) return;
@@ -19,13 +27,13 @@ function getSubdirectories(workspaceRoot: string): string[] {
       return;
     }
     for (const entry of entries) {
-      if (entry.name.startsWith('.') || IGNORE_DIRS.includes(entry.name)) {
+      const fullPath = path.join(current, entry.name);
+      const relPath = path.relative(workspaceRoot, fullPath) + (entry.isDirectory() ? '/' : '');
+      if (entry.name.startsWith('.') || ig.ignores(relPath)) {
         continue;
       }
       if (entry.isDirectory()) {
-        const fullPath = path.join(current, entry.name);
-        const rel = path.relative(workspaceRoot, fullPath);
-        dirs.push(rel + '/');
+        dirs.push(relPath);
         walk(fullPath, depth + 1);
       }
     }

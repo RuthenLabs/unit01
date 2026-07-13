@@ -180,6 +180,20 @@ const OLLAMA_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'fetch_webpage',
+      description: 'Fetches the complete text content of a target URL and returns it in clean Markdown format.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The absolute HTTP or HTTPS URL to fetch.' }
+        },
+        required: ['url']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description: 'Executes a command inside the sandboxed environment (running tests, builds, linting).',
       parameters: {
@@ -331,6 +345,8 @@ function formatToolCallToXml(tc: any): string {
       return `<search_code>${args.query || ''}</search_code>`;
     case 'web_search':
       return `<web_search>${args.query || ''}</web_search>`;
+    case 'fetch_webpage':
+      return `<fetch_webpage>${args.url || ''}</fetch_webpage>`;
     case 'run_command':
       return `<run_command>${args.command || ''}</run_command>`;
     case 'view_outline':
@@ -367,6 +383,7 @@ TOOLS (use exactly as shown — real paths, not placeholders):
 <search_code>query</search_code>
 <run_command>command</run_command>
 <web_search>query</web_search>
+<fetch_webpage>url</fetch_webpage>
 <view_outline path="path" />
 <git_status />
 <diagnostics />
@@ -378,10 +395,10 @@ TOOLS (use exactly as shown — real paths, not placeholders):
 <github_rename_repo owner="owner" repo="repo" new_name="new-name" />
 <github_create_issue owner="owner" repo="repo" title="title">body</github_create_issue>
 <github_create_pr owner="owner" repo="repo" title="title" head="head" base="base">body</github_create_pr>
-<slack_get_history channel="C123" limit="10" />
-<slack_post_message channel="C123">text</slack_post_message>
-<discord_get_history channel="C123" limit="10" />
-<discord_post_message channel="C123">text</discord_post_message>
+<slack_get_history channel="C123" limit="10" /> (channel is optional, defaults to last-used channel)
+<slack_post_message channel="C123">text</slack_post_message> (channel is optional, defaults to last-used channel)
+<discord_get_history channel="C123" limit="10" /> (channel is optional, defaults to last-used channel)
+<discord_post_message channel="C123">text</discord_post_message> (channel is optional, defaults to last-used channel)
 <notion_get_page page_id="id" />
 <notion_append_blocks block_id="id">JSON_array_children</notion_append_blocks>
 <telegram_get_updates limit="10" />
@@ -395,11 +412,14 @@ RULES:
 - When creating files, check [Repo Map] under [Directories] and ensure you place the file inside the correct subdirectory (e.g. write_file path="website/index.html"). Never default to the root workspace.
 - Implement ONE file per turn: after writing a file, do NOT output another tool tag. Instead, describe what you did in chat and ask the user for permission to write the next file.
 - Always wrap code snippets in your chat response inside fenced code blocks (using \`\`\`lang) so they format correctly with rounded borders.
-- Only use ask_user to ask the user something or request path access (options="Allow read-write, Allow read-only, Deny").
+- Use ask_user ONLY to request external path access (using options="Allow read-write, Allow read-only, Deny"). For all regular conversational questions, clarifications, or inputs, output them directly as plain text in your chat response. Do NOT call the ask_user tool for conversational questions.
 - For tasks outside workspace: try access first, if PATH_NOT_ALLOWED use ask_user to request permission.
 - Before writing new apps/features: present a plan in chat, wait for approval, then implement one file per turn.
 - Never call file-writing or editing tools (like write_file, patch_file_blocks, or patch_file) unless the user explicitly requests to create, save, edit, or write to a file (e.g. specifying a filename, path, or explicitly asking to save/modify/create a file). For all other requests, explanations, and code examples, output them directly in the chat response text without calling any tools.
-- For mcp_tool: use the exact server ID and tool name as listed in [MCP Tools]. Pass arguments as a JSON object inside the tag.`;
+- For mcp_tool: use the exact server ID and tool name as listed in [MCP Tools]. Pass arguments as a JSON object inside the tag.
+- Use web_search to find relevant URLs and brief snippets on a topic. Use fetch_webpage to load the full text/markdown content of a specific URL you want to read. Do not attempt to read full webpage content from web_search results.
+- Always output the closing tag for all tools (e.g., </web_search>, </fetch_webpage>, or </read_file>). Never stop generating mid-tag.
+- Write raw values inside XML tags. For example, for web_search, write the raw query (e.g., <web_search>latest openai news</web_search>). Do NOT prefix the value with "query:" or any other labels.`;
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -425,6 +445,53 @@ function detectProjectType(workspaceRoot: string): string | null {
   if (fs.existsSync(path.join(workspaceRoot, 'CMakeLists.txt'))) return 'C/C++';
   if (fs.existsSync(path.join(workspaceRoot, 'composer.json'))) return 'PHP';
   return null;
+}
+
+function detectTestCommand(workspaceRoot: string): string {
+  if (fs.existsSync(path.join(workspaceRoot, 'Cargo.toml'))) {
+    return 'cargo test';
+  }
+  if (fs.existsSync(path.join(workspaceRoot, 'go.mod'))) {
+    return 'go test ./...';
+  }
+  if (fs.existsSync(path.join(workspaceRoot, 'package.json'))) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(workspaceRoot, 'package.json'), 'utf-8'));
+      if (pkg.scripts?.test) {
+        if (fs.existsSync(path.join(workspaceRoot, 'bun.lockb')) || fs.existsSync(path.join(workspaceRoot, 'bun.lock'))) {
+          return 'bun test';
+        }
+        if (fs.existsSync(path.join(workspaceRoot, 'yarn.lock'))) {
+          return 'yarn test';
+        }
+        if (fs.existsSync(path.join(workspaceRoot, 'pnpm-lock.yaml'))) {
+          return 'pnpm test';
+        }
+        return 'npm test';
+      }
+    } catch {}
+    return 'npm test';
+  }
+  if (fs.existsSync(path.join(workspaceRoot, 'pyproject.toml')) || 
+      fs.existsSync(path.join(workspaceRoot, 'requirements.txt')) ||
+      fs.existsSync(path.join(workspaceRoot, 'setup.py'))) {
+    return 'pytest';
+  }
+  return 'npm test'; // Default fallback
+}
+
+function sendDesktopNotification(title: string, message: string) {
+  try {
+    const { exec } = require('child_process');
+    const cleanTitle = title.replace(/['"]/g, '');
+    const cleanMessage = message.replace(/['"]/g, '');
+    
+    if (process.platform === 'darwin') {
+      exec(`osascript -e 'display notification "${cleanMessage}" with title "${cleanTitle}"'`);
+    } else if (process.platform === 'linux') {
+      exec(`notify-send "${cleanTitle}" "${cleanMessage}"`);
+    }
+  } catch {}
 }
 
 interface Unit01Config {
@@ -609,7 +676,6 @@ async function main() {
   // modelContextWindow: the model's max architecture limit — used for display and compaction ratio only.
   // Never sent to Ollama as num_ctx (that would override its VRAM-aware default).
   let modelContextWindow = await ollama.getContextLimit(activeModel);
-  let thinkingEnabled = false;
 
   const config = loadConfig(workspaceRoot);
   let activePersonality = config.personality || 'vanilla';
@@ -666,6 +732,7 @@ async function main() {
   try {
     modelSupportsThinking = await ollama.checkModelThinkingCapability(activeModel);
   } catch (e) {}
+  let thinkingEnabled = modelSupportsThinking;
 
   const indexer = new DirectiveIndexer(workspaceRoot);
   await indexer.initialize({ silent: true });
@@ -763,13 +830,15 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
     ];
 
     try {
-      const chatResult = await ollama.chatStream(
-        activeModel,
-        summarisationPayload,
-        userContextLimit,
-        () => {},
-        new AbortController().signal
-      );
+        activeAbortController = new AbortController();
+        const chatResult = await ollama.chatStream(
+          activeModel,
+          summarisationPayload,
+          userContextLimit,
+          () => {},
+          activeAbortController.signal
+        );
+        activeAbortController = null;
 
       const contentText = chatResult.content;
 
@@ -967,6 +1036,7 @@ ${activeChanges}`;
 
         ui.startStreaming();
         try {
+          activeAbortController = new AbortController();
           const chatResult = await ollama.chatStream(
             activeModel,
             payload,
@@ -974,8 +1044,9 @@ ${activeChanges}`;
             (chunk) => {
               ui.onStreamChunk(chunk);
             },
-            new AbortController().signal
+            activeAbortController.signal
           );
+          activeAbortController = null;
           ui.endStreaming();
         } catch (err: any) {
           ui.endStreaming();
@@ -1124,7 +1195,7 @@ ${activeChanges}`;
           { cmd: '/preview',     desc: 'preview last file changes (diff format)' },
           { cmd: '/reindex',     desc: 're-scan workspace and rebuild file index' },
           { cmd: '/reset-password', desc: 'reset the master password of the credentials vault' },
-          { cmd: '/search',      desc: 'search the codebase' },
+          { cmd: '/search',      desc: 'search codebase  |  /search <provider> to set web search (tavily, brave, exa, serper, auto)' },
           { cmd: '/sessions',    desc: 'browse and manage saved sessions' },
           { cmd: '/status',      desc: 'show system status info' },
           { cmd: '/thinking',    desc: 'toggle model reasoning blocks' },
@@ -1727,6 +1798,7 @@ ${activeChanges}`;
           modelContextWindow = await ollama.getContextLimit(activeModel);
           useNativeTools = false;
           modelSupportsThinking = await ollama.checkModelThinkingCapability(activeModel).catch(() => false);
+          thinkingEnabled = modelSupportsThinking;
           ui.updateStatus(activeModel, '0', gitBranch);
           ui.printSystemMessage('info', `Switched to active model: ${activeModel} (Thinking: ${modelSupportsThinking ? 'yes' : 'no'})`);
         }
@@ -1784,13 +1856,26 @@ ${activeChanges}`;
       }
 
       if (command === '/undo') {
-        const dbBackup = indexer.db.db.prepare('SELECT original_path FROM shadow_backups LIMIT 1').get() as { original_path: string } | undefined;
+        const dbBackup = indexer.db.db.prepare(
+          'SELECT original_path, path_hash FROM shadow_backups ORDER BY version DESC LIMIT 1'
+        ).get() as { original_path: string; path_hash: string } | undefined;
         if (dbBackup) {
           const restoredPath = dbBackup.original_path;
           const success = indexer.undoWrite(restoredPath);
           if (success) {
             sandbox.clearLoopHistory();
-            ui.printSystemMessage('info', `Reverted changes for: ${path.basename(restoredPath)}`);
+            // Re-index the restored file
+            try {
+              if (fs.existsSync(restoredPath)) {
+                const stat = fs.statSync(restoredPath);
+                indexer.processFileOnStartup(restoredPath, stat);
+              }
+            } catch (_) {}
+            const remaining = indexer.db.getBackupDepth(
+              (await import('../../src/core/database/backup.js')).getPathHash(restoredPath)
+            );
+            const moreMsg = remaining > 0 ? `  (${remaining} more undo step${remaining > 1 ? 's' : ''} available)` : '';
+            ui.printSystemMessage('info', `Reverted: ${path.basename(restoredPath)}${moreMsg}`);
           } else {
             ui.printSystemMessage('error', `Failed to restore backup for ${restoredPath}`);
           }
@@ -1819,28 +1904,75 @@ ${activeChanges}`;
       }
 
       if (command === '/search') {
-        const runSearch = (queryStr: string) => {
-          const results = indexer.search(queryStr);
-          let out = `\nFound ${results.length} matches:\n`;
-          results.slice(0, 5).forEach(r => {
-            out += `  - ${r.relpath} (line ${r.start_line}-${r.end_line})\n`;
-          });
-          ui.addTextOutput(out);
-        };
+        const PROVIDERS = ['tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
 
-        if (!arg) {
-          const query = await ui.interactiveInput('Enter search query:');
-          const searchArg = query.trim();
-          if (!searchArg) {
-            ui.printSystemMessage('error', 'Search cancelled: empty query.');
+        const argTrimmed = arg ? arg.trim().toLowerCase() : '';
+
+        // 1. /search limit <number> — change max retrieved sources
+        if (argTrimmed.startsWith('limit ')) {
+          const limitVal = parseInt(argTrimmed.substring(6).trim(), 10);
+          if (isNaN(limitVal) || limitVal < 1 || limitVal > 20) {
+            ui.printSystemMessage('error', 'Search limit must be a valid integer between 1 and 20.');
           } else {
-            runSearch(searchArg);
+            try {
+              const { setSearchLimit } = await import('../../src/pro/connect/integrations/search.js');
+              setSearchLimit(limitVal);
+              ui.printSystemMessage('info', `Search result count limit set to: ${limitVal}`);
+            } catch (e: any) {
+              ui.printSystemMessage('error', `Failed to set search limit: ${e.message}`);
+            }
           }
-        } else {
-          runSearch(arg);
+          return;
         }
+
+        // 2. /search <provider> — switch web search provider
+        if (arg && PROVIDERS.includes(arg.trim().toLowerCase())) {
+          const provider = arg.trim().toLowerCase();
+          try {
+            const { setSearchProvider } = await import('../../src/pro/connect/integrations/search.js');
+            setSearchProvider(provider);
+            const label = provider === 'auto' ? 'Auto (use first connected key)' : provider.charAt(0).toUpperCase() + provider.slice(1);
+            ui.printSystemMessage('info', `Web search provider set to: ${label}`);
+          } catch (e: any) {
+            ui.printSystemMessage('error', `Failed to set provider: ${e.message}`);
+          }
+          return;
+        }
+
+        // 3. /search with no args — show current provider, current limit, + options
+        if (!arg) {
+          const { getSearchProvider, getSearchLimit } = await import('../../src/pro/connect/integrations/search.js');
+          const { isServiceConnected } = await import('../../src/core/tier.js');
+          const current = getSearchProvider();
+          const currentLimit = getSearchLimit();
+          const connected = PROVIDERS.filter(p => p !== 'auto' && p !== 'duckduckgo' && isServiceConnected(p));
+          const connectedStr = connected.length > 0 ? connected.join(', ') : 'none';
+
+          const options = [
+            ...PROVIDERS.map(p => {
+              const isActive = p === current;
+              const isConn = p !== 'auto' && p !== 'duckduckgo' && connected.includes(p);
+              const tag = isActive ? chalk.hex('#10B981')(' ✓ active') : '';
+              const connTag = isConn ? chalk.hex('#38BDF8')(' (connected)') : '';
+              return `${p}${tag}${connTag}`;
+            }),
+            'Search codebase instead'
+          ];
+
+          ui.addTextOutput(`\n  Current web search provider: ${chalk.hex('#C084FC')(current)}\n  Current search source limit: ${chalk.hex('#C084FC')(currentLimit)}\n  Connected keys: ${connectedStr}\n  Tip: /search <provider> to switch, /search limit <N> to set count limit, /search <query> to search codebase\n`);
+          return;
+        }
+
+        // 4. /search <query> — codebase search (original behavior)
+        const results = indexer.search(arg);
+        let out = `\nFound ${results.length} matches:\n`;
+        results.slice(0, 5).forEach(r => {
+          out += `  - ${r.relpath} (line ${r.start_line}-${r.end_line})\n`;
+        });
+        ui.addTextOutput(out);
         return;
       }
+
 
       if (command === '/audit') {
         const store = new AuditLogStore(indexer.db);
@@ -1979,6 +2111,7 @@ ${toolLines.join('\n')}\n`);
 
           const serviceOptions = [
             { id: 'tavily', label: 'Tavily (Web Search)' },
+            { id: 'brave',  label: 'Brave Web Search' },
             { id: 'exa',    label: 'Exa (Web Search)' },
             { id: 'jina',   label: 'Jina (Web Search)' },
             { id: 'serper', label: 'Serper (Web Search)' },
@@ -2065,6 +2198,13 @@ ${toolLines.join('\n')}\n`);
           }
 
           // Pro Tier: Secure Keychain/Vault flow
+          const isValid = await validateServiceToken(service, token);
+          if (!isValid) {
+            ui.hideToolProgress();
+            ui.printSystemMessage('error', `Failed to validate token for ${service}. Please check your credentials.`);
+            return;
+          }
+
           const { connectService, isSecretToolAvailable } = await import('../../src/pro/connect/index.js');
           
           if (process.platform !== 'darwin' && !isSecretToolAvailable()) {
@@ -2190,6 +2330,23 @@ ${toolLines.join('\n')}\n`);
             }
           }
         }
+
+        // Match Content of <url>:
+        const fetchMatch = /Content of (https?:\/\/[^\s:]+):([\s\S]+)/.exec(msg.content);
+        if (fetchMatch) {
+          const url = fetchMatch[1].trim();
+          const rawContent = fetchMatch[2].replace(/<\/tool_output>$/, '').trim();
+
+          // Only drop if it is actually populated to save context window tokens
+          if (rawContent.length > 100) {
+            const compressed = `[Webpage content fetched and read. Full body dropped to save tokens.]`;
+            if (msg.role === 'tool') {
+              msg.content = `Content of ${url}:\n${compressed}`;
+            } else {
+              msg.content = `<tool_output>\nContent of ${url}:\n${compressed}\n</tool_output>`;
+            }
+          }
+        }
       }
     };
 
@@ -2246,7 +2403,7 @@ ${toolLines.join('\n')}\n`);
           },
           activeAbortController.signal,
           useNativeTools ? OLLAMA_TOOLS : undefined,
-          modelSupportsThinking
+          modelSupportsThinking && thinkingEnabled
         );
         activeAbortController = null;
 
@@ -2319,7 +2476,7 @@ ${toolLines.join('\n')}\n`);
               if (writtenPath && ['write_file', 'patch_file', 'patch_file_blocks', 'delete_file', 'make_dir', 'copy_file'].includes(tc.function?.name)) {
                 evictReadFingerprintsForPath(writtenPath);
               }
-              toolResult = await handleToolCalls(xmlEquivalent, sandbox, indexer, ui, state);
+              toolResult = await handleToolCalls(xmlEquivalent, sandbox, indexer, ui, state, fileReadCache);
             }
           }
         } else {
@@ -2362,7 +2519,7 @@ ${toolLines.join('\n')}\n`);
               }
               if (writtenPath) evictReadFingerprintsForPath(writtenPath);
             }
-            toolResult = await handleToolCalls(cleanedResponse, sandbox, indexer, ui, state);
+            toolResult = await handleToolCalls(cleanedResponse, sandbox, indexer, ui, state, fileReadCache);
           }
         }
 
@@ -2378,22 +2535,39 @@ ${toolLines.join('\n')}\n`);
                             ));
         
         if (autopilotEnabled && toolResult.toolRun && hasEditedFiles) {
+          const testCommand = config.test_command || detectTestCommand(workspaceRoot);
+          ui.printSystemMessage('info', `🤖 [Autopilot] Verifying edits with test command: "${testCommand}"...`);
           try {
-            const { StructuredBuildPipeline } = await import('../../src/pro/autopilot/pipeline.js');
-            const testCommand = config.test_command || 'npm test';
-            const pipeline = new StructuredBuildPipeline(workspaceRoot, testCommand, 5);
-            ui.printSystemMessage('info', `🤖 [Autopilot] Verifying with test command: "${testCommand}"...`);
-            const result = await pipeline.executePipeline(
-              async () => {},
-              async (errorLog) => {
-                toolResult.nextPrompt = `<tool_output>\nVerification command failed:\n${errorLog}\n</tool_output>`;
-                return true;
-              }
-            );
-            if (!result.success) {
-              ui.printSystemMessage('error', '🤖 [Autopilot] Verification failed.');
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execPromise = promisify(exec);
+
+            let passed = false;
+            let output = '';
+            try {
+              const { stdout, stderr } = await execPromise(testCommand, {
+                cwd: workspaceRoot,
+                env: { ...process.env, CI: 'true' }
+              });
+              passed = true;
+              output = stdout + (stderr || '');
+            } catch (err: any) {
+              passed = false;
+              output = (err.stdout || '') + (err.stderr || '') + (err.message || '');
             }
-          } catch (e) {}
+
+            if (passed) {
+              ui.printSystemMessage('info', '🤖 [Autopilot] Verification passed successfully!');
+              sendDesktopNotification("Autopilot Success 🤖", `Verification passed for command: "${testCommand}"`);
+            } else {
+              ui.printSystemMessage('error', '🤖 [Autopilot] Verification failed. Self-healing trace generated.');
+              sendDesktopNotification("Autopilot Verification Failed ⚠️", `Self-healing in progress for: "${testCommand}"`);
+              toolResult.nextPrompt = `<tool_output>\nAutopilot verification command "${testCommand}" failed with output:\n${output.substring(0, 3000)}\n</tool_output>`;
+              toolResult.toolRun = true;
+            }
+          } catch (e: any) {
+            ui.printSystemMessage('error', `🤖 [Autopilot] Verification execution failed: ${e.message}`);
+          }
         }
 
         if (toolResult.toolRun) {

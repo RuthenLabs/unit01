@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import chalk from 'chalk';
+import ignore from 'ignore';
 import { IndexerDB, ChunkRecord } from '../database/db.js';
 import { chunkFile } from './chunker.js';
 import { buildRepoMap } from './repomap.js';
@@ -39,12 +40,23 @@ export class DirectiveIndexer {
   private diffTracker: DiffTracker;
   private backupManager: ShadowBackupManager;
   public currentRepoMap: string = '';
+  private ig = ignore().add(IGNORE_PATTERNS);
 
   constructor(workspaceRoot: string) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.db = new IndexerDB(this.workspaceRoot);
     this.diffTracker = new DiffTracker();
     this.backupManager = new ShadowBackupManager(this.db);
+
+    const gitignorePath = path.join(this.workspaceRoot, '.gitignore');
+    if (fs.existsSync(gitignorePath)) {
+      try {
+        const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
+        this.ig.add(gitignoreContent);
+      } catch (err) {
+        console.error('Failed to read .gitignore:', err);
+      }
+    }
   }
 
   /**
@@ -69,9 +81,10 @@ export class DirectiveIndexer {
 
       for (const entry of entries) {
         const fullPath = path.join(currentDir, entry.name);
+        const relPath = path.relative(this.workspaceRoot, fullPath) + (entry.isDirectory() ? '/' : '');
         
-        // Skip ignored directories/files or hidden files
-        if (IGNORE_PATTERNS.includes(entry.name) || entry.name.startsWith('.')) {
+        // Skip ignored directories/files or hidden files using standard .gitignore rules
+        if (entry.name.startsWith('.') || this.ig.ignores(relPath)) {
           continue;
         }
 

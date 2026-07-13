@@ -25,36 +25,45 @@ const READABLE_EXTS = new Set([
   '.html', '.css', '.scss', '.json', '.yaml', '.yml', '.toml', '.md', '.env'
 ]);
 
+// ── Module-level parser cache ─────────────────────────────────────────────────
+// Each language gets ONE parser instance created on first use and reused forever.
+// Building a new Parser() per file is the single biggest CPU waste on startup.
+const _parserCache = new Map<string, Parser>();
+
 function getParserForLanguage(lang: string): Parser | null {
+  if (_parserCache.has(lang)) return _parserCache.get(lang)!;
   const parser = new Parser();
   try {
     switch (lang) {
       case 'javascript':
         parser.setLanguage(JavaScript);
-        return parser;
+        break;
       case 'typescript':
         parser.setLanguage(typescript);
-        return parser;
+        break;
       case 'tsx':
         parser.setLanguage(tsx);
-        return parser;
+        break;
       case 'python':
         parser.setLanguage(Python);
-        return parser;
+        break;
       case 'rust':
         parser.setLanguage(Rust);
-        return parser;
+        break;
       case 'go':
         parser.setLanguage(Go);
-        return parser;
+        break;
       default:
         return null;
     }
+    _parserCache.set(lang, parser);
+    return parser;
   } catch (e) {
     console.error(`Failed to load tree-sitter parser for ${lang}:`, e);
     return null;
   }
 }
+
 
 // Split chunk content if it exceeds 100 lines, searching for nearest empty line
 export function splitContentIntoSubChunks(

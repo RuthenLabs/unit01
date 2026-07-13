@@ -27,6 +27,7 @@ import {
   parseReadFile,
   parseSearchCode,
   parseWebSearch,
+  parseFetchWebpage,
   parsePatchFile,
   parsePatchFileBlocks,
   parseListDir,
@@ -103,7 +104,8 @@ export async function handleToolCalls(
   sandbox: DirectiveSandbox,
   indexer: DirectiveIndexer,
   ui: UiAdapter,
-  state: CliState
+  state: CliState,
+  fileReadCache?: Map<string, string>
 ): Promise<{ toolRun: boolean; nextPrompt: string; consoleOutput: string }> {
   // Parse and validate all XML/HTML tags
   const openTagRegex = /<([a-zA-Z_][a-zA-Z0-9_\-]*)([^>]*)>/g;
@@ -114,7 +116,7 @@ export async function handleToolCalls(
     
     // Check if tag is a tool
     const isTool = [
-      'run_command', 'read_file', 'write_file', 'search_code', 'web_search',
+      'run_command', 'read_file', 'write_file', 'search_code', 'web_search', 'fetch_webpage',
       'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics',
       'move_file', 'think', 'question', 'path_question',
       'delete_file', 'view_outline', 'ask_user', 'make_dir', 'copy_file',
@@ -776,6 +778,8 @@ export async function handleToolCalls(
           status: 'completed'
         });
       } catch (_) {}
+      // Evict stale cache entry so next read_file sees fresh content
+      if (fileReadCache) fileReadCache.delete(absPath);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully written and indexed at ${filePath}\n</tool_output>`,
@@ -817,14 +821,23 @@ export async function handleToolCalls(
     
     let content = '';
     let success = false;
+    let servedFromCache = false;
     try {
-      if (fs.existsSync(absPath)) {
+      // ── Cache-first: if we already loaded this file this session, serve from RAM ──
+      const cached = fileReadCache?.get(absPath) ?? fileReadCache?.get(filePath);
+      if (cached !== undefined) {
+        content = cached;
+        success = true;
+        servedFromCache = true;
+      } else if (fs.existsSync(absPath)) {
         const stat = fs.statSync(absPath);
         if (stat.isDirectory()) {
           content = `Error: ${filePath} is a directory. Use run_command with shell commands like 'ls' or 'find' to inspect its contents.`;
         } else {
           content = fs.readFileSync(absPath, 'utf-8');
           success = true;
+          // Populate cache for future reads this session
+          if (fileReadCache) fileReadCache.set(absPath, content);
         }
       } else {
         content = `Error: File not found at ${filePath}`;
@@ -835,7 +848,8 @@ export async function handleToolCalls(
     
     ui.hideToolProgress();
     if (success) {
-      ui.printToolResult('success', `Read ${filePath} (${content.split('\n').length} lines)`);
+      const cacheTag = servedFromCache ? ' [cached]' : '';
+      ui.printToolResult('success', `Read ${filePath} (${content.split('\n').length} lines${cacheTag})`);
     } else {
       ui.printToolResult('failure', `Read ${filePath} (failed)`);
     }
@@ -877,10 +891,14 @@ export async function handleToolCalls(
     const formatted = results.slice(0, 5).map(r => 
       `- ${r.relpath} (line ${r.start_line}-${r.end_line}, type ${r.chunk_type}):\n${r.content}`
     ).join('\n\n');
-    
+
+    const totalNote = results.length > 5
+      ? `\nShowing top 5 of ${results.length} total matches. Refine your query to narrow results.`
+      : '';
+
     return {
       toolRun: true,
-      nextPrompt: `<tool_output>\nSearch results for "${query}":\n${formatted || 'No matches found'}\n</tool_output>`,
+      nextPrompt: `<tool_output>\nSearch results for "${query}" (${results.length} total):\n${formatted || 'No matches found'}${totalNote}\n</tool_output>`,
       consoleOutput: `\n[Search executed: "${query}"]`
     };
   }
@@ -898,7 +916,7 @@ export async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('web_search')} query "${query}" ...`);
+    ui.showToolProgress(`${themeAccent('web_search')} "${query}"...`);
     
     let results: any[] = [];
     try {
@@ -934,6 +952,54 @@ export async function handleToolCalls(
       toolRun: true,
       nextPrompt: `<tool_output>\nWeb search results for "${query}":\n${formatted || 'No results found'}\n</tool_output>`,
       consoleOutput: `\n[Web search executed: "${query}"]`
+    };
+  }
+
+  const fetchWebpageUrl = parseFetchWebpage(text);
+  if (fetchWebpageUrl !== null) {
+    const url = fetchWebpageUrl.trim();
+    if (isGui) guiEmit({ type: 'tool-call', tool: 'fetch_webpage', url });
+    if (!url) {
+      ui.printToolResult('failure', `Fetched webpage (blocked: empty URL)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: URL cannot be empty.\n</tool_output>`,
+        consoleOutput: `\n[Fetch webpage blocked: empty URL]`
+      };
+    }
+
+    ui.showToolProgress(`${themeAccent('fetch_webpage')} ${url}...`);
+
+    let pageContent = '';
+    try {
+      const { executeFetchWebpage } = await import('../../src/pro/connect/integrations/search.js');
+      pageContent = await executeFetchWebpage(url);
+    } catch (e: any) {
+      pageContent = `Failed to fetch webpage content: ${e.message}`;
+    }
+
+    ui.hideToolProgress();
+    ui.printToolResult('success', `Fetched webpage: ${url}`);
+
+    try {
+      const crypto = await import('crypto');
+      const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+      const auditStore = new AuditLogStore(indexer.db);
+      const payloadHash = crypto.createHash('sha256').update(url).digest('hex');
+      auditStore.logAction({
+        service: 'web-fetch',
+        operation: 'fetch',
+        target: url,
+        payload_summary: `Fetched ${pageContent.length} chars`,
+        payload_hash: payloadHash,
+        status: 'completed'
+      });
+    } catch (_) {}
+
+    return {
+      toolRun: true,
+      nextPrompt: `<tool_output>\nContent of ${url}:\n${pageContent}\n</tool_output>`,
+      consoleOutput: `\n[Fetched webpage: "${url}"]`
     };
   }
 
@@ -1132,6 +1198,8 @@ export async function handleToolCalls(
           status: 'completed'
         });
       } catch (_) {}
+      // Evict stale cache entry so next read_file sees fresh content
+      if (fileReadCache) fileReadCache.delete(absPath);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully patched using blocks at ${filePath}\n</tool_output>`,
@@ -1657,7 +1725,12 @@ export async function handleToolCalls(
     const getBody = (tag: string): string => {
       const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\/${tag}>`, 'i');
       const m = re.exec(text);
-      return m ? m[1].trim() : '';
+      if (m) return m[1].trim();
+
+      // Fallback: if closing tag is missing, take everything after the opening tag
+      const openRe = new RegExp(`<${tag}[^>]*>([\\s\\S]*)$`, 'i');
+      const openMatch = openRe.exec(text);
+      return openMatch ? openMatch[1].trim() : '';
     };
 
     // Gating check
@@ -1736,7 +1809,11 @@ export async function handleToolCalls(
           const limit = limitStr ? parseInt(limitStr) : 10;
           const { fetchSlackMessages } = await import('../../src/pro/connect/integrations/slack.js');
           const history = await fetchSlackMessages(channel, limit);
-          output = JSON.stringify(history, null, 2);
+          if (history.length === 0) {
+            output = `No messages found in Slack channel ${channel}.`;
+          } else {
+            output = history.map((m: any) => `[${m.user || 'User'}]: ${m.text}`).join('\n');
+          }
           break;
         }
         case 'slack_post_message': {
@@ -1744,7 +1821,7 @@ export async function handleToolCalls(
           const body = getBody('slack_post_message');
           const { postSlackMessage } = await import('../../src/pro/connect/integrations/slack.js');
           const res = await postSlackMessage(channel, body);
-          output = JSON.stringify(res, null, 2);
+          output = `Slack message posted successfully to channel ${channel} (TS: ${res.ts || 'unknown'}).`;
           break;
         }
         case 'discord_get_history': {
@@ -1753,7 +1830,11 @@ export async function handleToolCalls(
           const limit = limitStr ? parseInt(limitStr) : 10;
           const { fetchDiscordMessages } = await import('../../src/pro/connect/integrations/discord.js');
           const history = await fetchDiscordMessages(channel, limit);
-          output = JSON.stringify(history, null, 2);
+          if (history.length === 0) {
+            output = `No messages found in Discord channel ${channel}.`;
+          } else {
+            output = history.map((m: any) => `[${m.author?.username || 'User'}]: ${m.content}`).join('\n');
+          }
           break;
         }
         case 'discord_post_message': {
@@ -1761,7 +1842,7 @@ export async function handleToolCalls(
           const body = getBody('discord_post_message');
           const { postDiscordMessage } = await import('../../src/pro/connect/integrations/discord.js');
           const res = await postDiscordMessage(channel, body);
-          output = JSON.stringify(res, null, 2);
+          output = `Discord message posted successfully to channel ${channel} (ID: ${res.id || 'unknown'}).`;
           break;
         }
         case 'notion_get_page': {

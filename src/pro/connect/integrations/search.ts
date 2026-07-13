@@ -5,7 +5,15 @@ import chalk from 'chalk';
 import { getServiceToken } from '../../../core/tier.js';
 
 const FREE_QUOTA_FILE = path.join(homedir(), '.unit01', 'free_search_quota.json');
+const GLOBAL_CONFIG_FILE = path.join(homedir(), '.unit01', 'config.json');
 const themeAccent = chalk.hex('#38BDF8');
+
+// ── Fetch timeout helper (10 seconds) ────────────────────────────────────────
+function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
 
 export interface SearchResult {
   title: string;
@@ -16,6 +24,63 @@ export interface SearchResult {
 interface QuotaData {
   date: string;
   count: number;
+}
+
+// ── Search provider preference ────────────────────────────────────────────────
+// Stored in ~/.unit01/config.json as { "search_provider": "tavily" }
+// Valid values: "tavily" | "brave" | "exa" | "serper" | "duckduckgo"
+
+export function getSearchProvider(): string {
+  try {
+    if (fs.existsSync(GLOBAL_CONFIG_FILE)) {
+      const conf = JSON.parse(fs.readFileSync(GLOBAL_CONFIG_FILE, 'utf-8'));
+      if (conf?.search_provider) return conf.search_provider as string;
+    }
+  } catch {}
+  return 'auto'; // auto = use whichever key is connected, prefer first connected
+}
+
+export function setSearchProvider(provider: string): void {
+  const validProviders = ['tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
+  if (!validProviders.includes(provider)) {
+    throw new Error(`Invalid provider "${provider}". Valid options: ${validProviders.join(', ')}`);
+  }
+  const dir = path.dirname(GLOBAL_CONFIG_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  let conf: Record<string, any> = {};
+  try {
+    if (fs.existsSync(GLOBAL_CONFIG_FILE)) {
+      conf = JSON.parse(fs.readFileSync(GLOBAL_CONFIG_FILE, 'utf-8'));
+    }
+  } catch {}
+  conf.search_provider = provider;
+  fs.writeFileSync(GLOBAL_CONFIG_FILE, JSON.stringify(conf, null, 2), { mode: 0o600 });
+}
+
+export function getSearchLimit(): number {
+  try {
+    if (fs.existsSync(GLOBAL_CONFIG_FILE)) {
+      const conf = JSON.parse(fs.readFileSync(GLOBAL_CONFIG_FILE, 'utf-8'));
+      if (typeof conf?.search_limit === 'number') return conf.search_limit;
+    }
+  } catch {}
+  return 5; // Default limit
+}
+
+export function setSearchLimit(limit: number): void {
+  if (limit < 1 || limit > 20) {
+    throw new Error('Search limit must be between 1 and 20.');
+  }
+  const dir = path.dirname(GLOBAL_CONFIG_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  let conf: Record<string, any> = {};
+  try {
+    if (fs.existsSync(GLOBAL_CONFIG_FILE)) {
+      conf = JSON.parse(fs.readFileSync(GLOBAL_CONFIG_FILE, 'utf-8'));
+    }
+  } catch {}
+  conf.search_limit = limit;
+  fs.writeFileSync(GLOBAL_CONFIG_FILE, JSON.stringify(conf, null, 2), { mode: 0o600 });
 }
 
 /**
@@ -75,9 +140,9 @@ function incrementFreeQuota(): void {
 /**
  * Fetch search results using DuckDuckGo Lite.
  */
-export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
+export async function searchDuckDuckGo(query: string, limit = 5): Promise<SearchResult[]> {
   try {
-    const response = await fetch('https://lite.duckduckgo.com/lite/', {
+    const response = await fetchWithTimeout('https://lite.duckduckgo.com/lite/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -88,6 +153,15 @@ export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
 
     if (!response.ok) throw new Error(`DDG response status ${response.status}`);
     const html = await response.text();
+    
+    if (html.includes('anomaly-modal') || html.includes('anomaly.js') || html.includes('bots use DuckDuckGo too')) {
+      return [{
+        title: "DuckDuckGo CAPTCHA Triggered",
+        url: "https://unit01.dev/upgrade",
+        snippet: "⚠️ Fallback search failed because DuckDuckGo blocked the request with a bot CAPTCHA. Please configure a custom search API key (Tavily, Brave, Exa, Serper) using /connect to unlock reliable web search."
+      }];
+    }
+    
     const results: SearchResult[] = [];
 
     const linkMatches: { url: string; title: string }[] = [];
@@ -106,7 +180,7 @@ export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
     }
 
     for (let i = 0; i < Math.min(linkMatches.length, snippetMatches.length); i++) {
-      if (results.length >= 5) break;
+      if (results.length >= limit) break;
       const href = linkMatches[i].url;
       if (href.startsWith('http')) {
         results.push({
@@ -127,14 +201,14 @@ export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
 /**
  * Fetch search results using Tavily Search API.
  */
-async function searchTavily(query: string, apiKey: string): Promise<SearchResult[]> {
-  const response = await fetch('https://api.tavily.com/search', {
+async function searchTavily(query: string, apiKey: string, limit = 5): Promise<SearchResult[]> {
+  const response = await fetchWithTimeout('https://api.tavily.com/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       api_key: apiKey,
       query: query,
-      num_results: 5
+      num_results: limit
     })
   });
   if (!response.ok) {
@@ -152,8 +226,8 @@ async function searchTavily(query: string, apiKey: string): Promise<SearchResult
 /**
  * Fetch search results using Exa API.
  */
-async function searchExa(query: string, apiKey: string): Promise<SearchResult[]> {
-  const response = await fetch('https://api.exa.ai/search', {
+async function searchExa(query: string, apiKey: string, limit = 5): Promise<SearchResult[]> {
+  const response = await fetchWithTimeout('https://api.exa.ai/search', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -161,7 +235,7 @@ async function searchExa(query: string, apiKey: string): Promise<SearchResult[]>
     },
     body: JSON.stringify({
       query: query,
-      numResults: 5,
+      numResults: limit,
       highlights: true
     })
   });
@@ -183,14 +257,14 @@ async function searchExa(query: string, apiKey: string): Promise<SearchResult[]>
 /**
  * Fetch search results using Serper.dev API.
  */
-async function searchSerper(query: string, apiKey: string): Promise<SearchResult[]> {
-  const response = await fetch('https://google.serper.dev/search', {
+async function searchSerper(query: string, apiKey: string, limit = 5): Promise<SearchResult[]> {
+  const response = await fetchWithTimeout('https://google.serper.dev/search', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-API-KEY': apiKey
     },
-    body: JSON.stringify({ q: query, num: 5 })
+    body: JSON.stringify({ q: query, num: limit })
   });
   if (!response.ok) {
     throw new Error(`Serper API returned status ${response.status}`);
@@ -205,82 +279,140 @@ async function searchSerper(query: string, apiKey: string): Promise<SearchResult
 }
 
 /**
- * Scrape URL content into clean markdown format using Jina Reader API.
+ * Fetch search results using Brave Search API.
  */
-async function scrapeWithJina(url: string, apiKey: string): Promise<string> {
-  const response = await fetch(`https://r.jina.ai/${url}`, {
+async function searchBrave(query: string, apiKey: string, limit = 5): Promise<SearchResult[]> {
+  const response = await fetchWithTimeout(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`, {
     headers: {
-      'Authorization': `Bearer ${apiKey}`
+      'Accept': 'application/json',
+      'X-Subscription-Token': apiKey
     }
   });
   if (!response.ok) {
-    return '';
+    throw new Error(`Brave Search API status ${response.status}`);
   }
-  const text = await response.text();
-  return text.substring(0, 1000); // Return first 1000 characters of clean Markdown
+  const data = await response.json() as any;
+  const results = data.web?.results || [];
+  return results.map((r: any) => ({
+    title: r.title || 'Untitled',
+    url: r.url || '',
+    snippet: r.description || ''
+  }));
 }
 
 /**
- * Executive search gateway logic.
- * Handles free daily search limits, checks for premium API keys, and routes search requests.
+ * Scrape URL content into clean markdown format using Jina Reader API.
+ * NOTE: Jina is a scraper only — NOT used for web search anymore.
+ * It's kept here exclusively for the fetch_webpage tool.
+ */
+export async function scrapeWithJina(url: string, apiKey: string): Promise<string> {
+  const response = await fetchWithTimeout(`https://r.jina.ai/${url}`, {
+    headers: {
+      'Authorization': `Bearer ${apiKey}`
+    }
+  }, 15000); // Jina can be slower, give it 15s
+  if (!response.ok) {
+    return '';
+  }
+  return await response.text(); // No cap — return full content, context compressor handles it downstream
+}
+
+/**
+ * Execute webpage content fetching (using Jina Reader API with a clean HTML fallback).
+ */
+export async function executeFetchWebpage(url: string): Promise<string> {
+  const jinaKey = getServiceToken('jina');
+  if (jinaKey) {
+    try {
+      const content = await scrapeWithJina(url, jinaKey);
+      if (content) return content;
+    } catch (_) {}
+  }
+  
+  try {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+    const text = await response.text();
+    // Resilient HTML stripping fallback
+    const clean = text
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return clean.substring(0, 4000);
+  } catch (err: any) {
+    return `Failed to fetch webpage: ${err.message}`;
+  }
+}
+
+/**
+ * Execute a web search using the user's chosen provider.
+ * No waterfall — the user picks what they want via /search <provider>.
+ * Falls back to DuckDuckGo only on error, with a clear message.
  */
 export async function executeWebSearch(query: string): Promise<SearchResult[]> {
-  const proLicense = getServiceToken('pro-license');
   const tavilyKey = getServiceToken('tavily');
-  const exaKey = getServiceToken('exa');
-  const jinaKey = getServiceToken('jina');
+  const braveKey  = getServiceToken('brave');
+  const exaKey    = getServiceToken('exa');
   const serperKey = getServiceToken('serper');
+  // NOTE: Jina is intentionally NOT included here — it's a scraper, not a search engine.
 
-  const isPro = !!(proLicense || tavilyKey || exaKey || jinaKey || serperKey);
+  const hasAnyKey = !!(tavilyKey || braveKey || exaKey || serperKey);
+  const searchLimit = getSearchLimit();
 
-  // Free Tier Daily search limit enforcement
-  if (!isPro) {
+  // Free Tier Daily search limit enforcement (only when no custom keys connected)
+  if (!hasAnyKey) {
     const quota = checkFreeQuota();
     if (!quota.allowed) {
       return [{
         title: "Free Tier Limit Reached",
         url: "https://unit01.dev/upgrade",
-        snippet: `⚠️ Daily search limit reached (11/11). Please upgrade to Pro or configure a custom API Key (Tavily/Exa/Jina/Serper) under /connect to unlock unlimited search.`
+        snippet: `⚠️ Daily search limit reached (11/11). Please upgrade to Pro or configure a custom API Key (Tavily/Brave/Exa/Serper) under /connect to unlock unlimited search.`
       }];
     }
     incrementFreeQuota();
+    return await searchDuckDuckGo(query, searchLimit);
   }
 
-  try {
-    if (isPro) {
-      if (tavilyKey) {
-        return await searchTavily(query, tavilyKey);
+  // ── User-selected provider ──────────────────────────────────────────────────
+  const chosenProvider = getSearchProvider();
+
+  const runProvider = async (provider: string): Promise<SearchResult[] | null> => {
+    try {
+      switch (provider) {
+        case 'tavily':  return tavilyKey  ? await searchTavily(query, tavilyKey, searchLimit)   : null;
+        case 'brave':   return braveKey   ? await searchBrave(query, braveKey, searchLimit)     : null;
+        case 'exa':     return exaKey     ? await searchExa(query, exaKey, searchLimit)         : null;
+        case 'serper':  return serperKey  ? await searchSerper(query, serperKey, searchLimit)   : null;
+        default:        return null;
       }
-      if (exaKey) {
-        return await searchExa(query, exaKey);
-      }
-      if (serperKey) {
-        return await searchSerper(query, serperKey);
-      }
-      if (jinaKey) {
-        // Enriched DuckDuckGo results using Jina URL-to-Markdown scraper
-        const ddgResults = await searchDuckDuckGo(query);
-        const enriched = await Promise.all(ddgResults.slice(0, 2).map(async (r) => {
-          try {
-            const fullContent = await scrapeWithJina(r.url, jinaKey);
-            if (fullContent) {
-              return {
-                title: r.title,
-                url: r.url,
-                snippet: `${r.snippet}\n\n[Jina Scraped Content]:\n${fullContent}`
-              };
-            }
-          } catch (_) {}
-          return r;
-        }));
-        return [...enriched, ...ddgResults.slice(2)];
-      }
+    } catch (err: any) {
+      console.warn(chalk.yellow(`[Search] Provider "${provider}" failed: ${err.message}`));
+      return null;
     }
+  };
 
-    // Default search connection
-    return await searchDuckDuckGo(query);
-  } catch (err: any) {
-    console.warn(chalk.yellow(`Search API failed — falling back to DuckDuckGo. Error: ${err}`));
-    return await searchDuckDuckGo(query);
+  // Explicit provider set — run it directly, no waterfall
+  if (chosenProvider !== 'auto' && chosenProvider !== 'duckduckgo') {
+    const results = await runProvider(chosenProvider);
+    if (results) return results;
+    // Provider failed — tell the user and fall back
+    console.warn(chalk.yellow(`[Search] Configured provider "${chosenProvider}" failed or key not connected. Falling back to DuckDuckGo.`));
+    return await searchDuckDuckGo(query, searchLimit);
   }
+
+  // "auto" mode — use whichever single key is connected (still no waterfall, first connected wins)
+  if (tavilyKey)  { const r = await runProvider('tavily');  if (r) return r; }
+  if (braveKey)   { const r = await runProvider('brave');   if (r) return r; }
+  if (exaKey)     { const r = await runProvider('exa');     if (r) return r; }
+  if (serperKey)  { const r = await runProvider('serper');  if (r) return r; }
+
+  return await searchDuckDuckGo(query, searchLimit);
 }
+
+

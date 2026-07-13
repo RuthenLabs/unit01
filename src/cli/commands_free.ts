@@ -812,7 +812,38 @@ export async function handleToolCalls(
     let results: any[] = [];
     try {
       const { searchDuckDuckGo } = await import('../core/search.js');
-      results = await searchDuckDuckGo(query);
+      let augmentedQuery = query;
+
+      // Smart Context Query Augmentation
+      const fs = await import('fs');
+      const path = await import('path');
+      const root = indexer.db.workspaceRoot;
+      const contextKeywords: string[] = [];
+
+      if (fs.existsSync(path.join(root, 'package.json'))) {
+        contextKeywords.push('nodejs');
+        try {
+          const pkgJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
+          if (pkgJson.dependencies?.['next']) contextKeywords.push('nextjs');
+          if (pkgJson.dependencies?.['react']) contextKeywords.push('react');
+          if (pkgJson.devDependencies?.['typescript'] || pkgJson.dependencies?.['typescript']) contextKeywords.push('typescript');
+        } catch (_) {}
+      } else if (fs.existsSync(path.join(root, 'Cargo.toml'))) {
+        contextKeywords.push('rust');
+      } else if (fs.existsSync(path.join(root, 'go.mod'))) {
+        contextKeywords.push('go');
+      } else if (fs.existsSync(path.join(root, 'pyproject.toml')) || fs.existsSync(path.join(root, 'requirements.txt'))) {
+        contextKeywords.push('python');
+      }
+
+      if (contextKeywords.length > 0) {
+        const missing = contextKeywords.filter(k => !query.toLowerCase().includes(k));
+        if (missing.length > 0) {
+          augmentedQuery = `${query} ${missing.join(' ')}`;
+        }
+      }
+
+      results = await searchDuckDuckGo(augmentedQuery);
     } catch (e: any) {
       results = [];
     }

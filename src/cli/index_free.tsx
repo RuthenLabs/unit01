@@ -390,7 +390,7 @@ RULES:
 - When creating files, check [Repo Map] under [Directories] and ensure you place the file inside the correct subdirectory (e.g. write_file path="website/index.html"). Never default to the root workspace.
 - Implement ONE file per turn: after writing a file, do NOT output another tool tag. Instead, describe what you did in chat and ask the user for permission to write the next file.
 - Always wrap code snippets in your chat response inside fenced code blocks (using \`\`\`lang) so they format correctly with rounded borders.
-- Only use ask_user to ask the user something or request path access (options="Allow read-write, Allow read-only, Deny").
+- Only use ask_user to ask the user something or request path access (options="Allow read-write, Allow read-only, Deny"). If you just want to respond to the user conversationally without running any action, output your response directly as plain text. Do NOT use the ask_user tool for regular questions or greetings.
 - For tasks outside workspace: try access first, if PATH_NOT_ALLOWED use ask_user to request permission.
 - Before writing new apps/features: present a plan in chat, wait for approval, then implement one file per turn.
 - Never call file-writing or editing tools (like write_file, patch_file_blocks, or patch_file) unless the user explicitly requests to create, save, edit, or write to a file (e.g. specifying a filename, path, or explicitly asking to save/modify/create a file). For all other requests, explanations, and code examples, output them directly in the chat response text without calling any tools.
@@ -604,7 +604,6 @@ async function main() {
   // modelContextWindow: the model's max architecture limit — used for display and compaction ratio only.
   // Never sent to Ollama as num_ctx (that would override its VRAM-aware default).
   let modelContextWindow = await ollama.getContextLimit(activeModel);
-  let thinkingEnabled = false;
 
   const config = loadConfig(workspaceRoot);
   let activePersonality = config.personality || 'vanilla';
@@ -661,6 +660,7 @@ async function main() {
   try {
     modelSupportsThinking = await ollama.checkModelThinkingCapability(activeModel);
   } catch (e) {}
+  let thinkingEnabled = modelSupportsThinking;
 
   const indexer = new DirectiveIndexer(workspaceRoot);
   await indexer.initialize({ silent: true });
@@ -1749,6 +1749,7 @@ ${activeChanges}`;
           modelContextWindow = await ollama.getContextLimit(activeModel);
           useNativeTools = false;
           modelSupportsThinking = await ollama.checkModelThinkingCapability(activeModel).catch(() => false);
+          thinkingEnabled = modelSupportsThinking;
           ui.updateStatus(activeModel, '0', gitBranch);
           ui.printSystemMessage('info', `Switched to active model: ${activeModel} (Thinking: ${modelSupportsThinking ? 'yes' : 'no'})`);
         }
@@ -1995,6 +1996,23 @@ ${toolLines.join('\n')}\n`);
             }
           }
         }
+
+        // Match Content of <url>:
+        const fetchMatch = /Content of (https?:\/\/[^\s:]+):([\s\S]+)/.exec(msg.content);
+        if (fetchMatch) {
+          const url = fetchMatch[1].trim();
+          const rawContent = fetchMatch[2].replace(/<\/tool_output>$/, '').trim();
+
+          // Only drop if it is actually populated to save context window tokens
+          if (rawContent.length > 100) {
+            const compressed = `[Webpage content fetched and read. Full body dropped to save tokens.]`;
+            if (msg.role === 'tool') {
+              msg.content = `Content of ${url}:\n${compressed}`;
+            } else {
+              msg.content = `<tool_output>\nContent of ${url}:\n${compressed}\n</tool_output>`;
+            }
+          }
+        }
       }
     };
 
@@ -2051,7 +2069,7 @@ ${toolLines.join('\n')}\n`);
           },
           activeAbortController.signal,
           useNativeTools ? OLLAMA_TOOLS : undefined,
-          modelSupportsThinking
+          modelSupportsThinking && thinkingEnabled
         );
         activeAbortController = null;
 
@@ -2184,14 +2202,36 @@ ${toolLines.join('\n')}\n`);
         
         if (autopilotEnabled && toolResult.toolRun && hasEditedFiles) {
           const testCommand = config.test_command || 'npm test';
-          ui.printSystemMessage('info', `🤖 [Verification] Running test command: "${testCommand}"...`);
+          ui.printSystemMessage('info', `🤖 [Autopilot] Verifying edits with test command: "${testCommand}"...`);
           try {
-            const { execSync } = require('child_process');
-            execSync(testCommand, { cwd: workspaceRoot, stdio: 'ignore' });
-            ui.printSystemMessage('info', '🤖 [Verification] Passed.');
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execPromise = promisify(exec);
+
+            let passed = false;
+            let output = '';
+            try {
+              const { stdout, stderr } = await execPromise(testCommand, {
+                cwd: workspaceRoot,
+                env: { ...process.env, CI: 'true' }
+              });
+              passed = true;
+              output = stdout + (stderr || '');
+            } catch (err: any) {
+              passed = false;
+              output = (err.stdout || '') + (err.stderr || '') + (err.message || '');
+            }
+
+            if (passed) {
+              ui.printSystemMessage('info', '🤖 [Autopilot] Verification passed successfully!');
+            } else {
+              ui.printSystemMessage('error', '🤖 [Autopilot] Verification failed. Self-healing trace generated.');
+              ui.addTextOutput(`\n  ${chalk.hex('#F59E0B')('💡 Pro Tip:')} ${chalk.hex('#6B7280')('Upgrade to Pro to enable autonomous multi-iteration self-healing.')}\n`);
+              toolResult.nextPrompt = `<tool_output>\nAutopilot verification command "${testCommand}" failed with output:\n${output.substring(0, 3000)}\n</tool_output>`;
+              toolResult.toolRun = true;
+            }
           } catch (e: any) {
-            ui.printSystemMessage('error', '🤖 [Verification] Failed.');
-            ui.addTextOutput(`\n  ${chalk.hex('#F59E0B')('💡 Pro Tip:')} ${chalk.hex('#6B7280')('Upgrade to Pro to enable autonomous 8-iteration self-healing.')}\n`);
+            ui.printSystemMessage('error', `🤖 [Autopilot] Verification execution failed: ${e.message}`);
           }
         }
 

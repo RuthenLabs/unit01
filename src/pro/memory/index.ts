@@ -97,6 +97,14 @@ export class ProjectMemoryStore {
   public autoCapture(responseText: string, sessionId?: string): void {
     if (!responseText || responseText.length < 20) return;
 
+    // ── Fast pre-check: skip ALL regex+DB work if no heuristic trigger words present ──
+    // This keeps autoCapture near-zero cost for the 99% of responses that carry no signals.
+    const TRIGGER_WORDS = ['always', 'convention', 'decided', 'going forward', 'from now on',
+                           'the rule', 'the pattern', 'the standard', 'the style',
+                           'will use', 'i\'ll use', 'we\'re using', 'we use'];
+    const lowerText = responseText.toLowerCase();
+    if (!TRIGGER_WORDS.some(w => lowerText.includes(w))) return;
+
     // ── Convention signals ───────────────────────────────────────────────────
     const conventionPatterns = [
       // "always use X", "we always use X"

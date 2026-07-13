@@ -5,11 +5,23 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const freeRoot = path.resolve(__dirname, '../../unit01');
+const siblingFree = path.resolve(__dirname, '../../unit01');
+const nestedFree = path.resolve(__dirname, '../../unit01/unit01');
+let freeRoot = siblingFree;
+
+if (fs.existsSync(nestedFree) && fs.existsSync(path.join(nestedFree, 'src'))) {
+  freeRoot = nestedFree;
+} else if (fs.existsSync(siblingFree) && fs.existsSync(path.join(siblingFree, 'src'))) {
+  freeRoot = siblingFree;
+} else {
+  // Try sibling unit01 but default fallback is still standard error message
+  freeRoot = fs.existsSync(nestedFree) ? nestedFree : siblingFree;
+}
+
 const proRoot = path.resolve(__dirname, '../');
 
-if (!fs.existsSync(freeRoot)) {
-  console.error(`Error: Free repository not found at expected sibling path: ${freeRoot}`);
+if (!fs.existsSync(freeRoot) || !fs.existsSync(path.join(freeRoot, 'src'))) {
+  console.error(`Error: Free repository not found at expected path: ${freeRoot}`);
   process.exit(1);
 }
 

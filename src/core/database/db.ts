@@ -39,6 +39,7 @@ export interface ShadowBackupRecord {
   path_hash: string;
   original_path: string;
   content: string;
+  version?: number;
 }
 
 export class IndexerDB {
@@ -98,11 +99,33 @@ export class IndexerDB {
       );
 
       CREATE TABLE IF NOT EXISTS shadow_backups (
-        path_hash TEXT PRIMARY KEY,
+        path_hash TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
         original_path TEXT NOT NULL,
-        content TEXT NOT NULL
+        content TEXT NOT NULL,
+        PRIMARY KEY (path_hash, version)
       );
     `);
+
+    // Migrate legacy single-row schema (path_hash sole PK) to stacked schema if needed
+    try {
+      const cols = this.db.prepare("PRAGMA table_info(shadow_backups)").all() as any[];
+      const hasVersion = cols.some((c: any) => c.name === 'version');
+      if (!hasVersion) {
+        // Drop the old single-column-PK table and recreate — data loss is acceptable
+        // (old backups were one-deep anyway)
+        this.db.exec('DROP TABLE IF EXISTS shadow_backups');
+        this.db.exec(`
+          CREATE TABLE shadow_backups (
+            path_hash TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            original_path TEXT NOT NULL,
+            content TEXT NOT NULL,
+            PRIMARY KEY (path_hash, version)
+          );
+        `);
+      }
+    } catch (_) {}
 
     // Triggers for syncing virtual FTS table
     this.db.exec(`
@@ -222,23 +245,76 @@ export class IndexerDB {
     `).all(safeQuery) as unknown as (ChunkRecord & { rank: number })[];
   }
 
-  // --- Shadow Backup Operations ---
+  // --- Shadow Backup Stack Operations ---
+  private static readonly MAX_BACKUP_DEPTH = 10;
+
+  /**
+   * Push a new backup version onto the stack for a given file.
+   * Automatically evicts the oldest entry when depth exceeds MAX_BACKUP_DEPTH.
+   */
+  public pushBackup(backup: Omit<ShadowBackupRecord, 'version'>) {
+    // Find current max version for this path_hash
+    const row = this.db.prepare(
+      'SELECT MAX(version) as maxv FROM shadow_backups WHERE path_hash = ?'
+    ).get(backup.path_hash) as { maxv: number | null };
+    const nextVersion = (row?.maxv ?? 0) + 1;
+
+    this.db.prepare(
+      'INSERT INTO shadow_backups (path_hash, version, original_path, content) VALUES (?, ?, ?, ?)'
+    ).run(backup.path_hash, nextVersion, backup.original_path, backup.content);
+
+    // Prune oldest entries beyond depth limit
+    const count = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM shadow_backups WHERE path_hash = ?'
+    ).get(backup.path_hash) as { c: number }).c;
+
+    if (count > IndexerDB.MAX_BACKUP_DEPTH) {
+      this.db.prepare(`
+        DELETE FROM shadow_backups WHERE path_hash = ? AND version IN (
+          SELECT version FROM shadow_backups WHERE path_hash = ?
+          ORDER BY version ASC LIMIT ?
+        )
+      `).run(backup.path_hash, backup.path_hash, count - IndexerDB.MAX_BACKUP_DEPTH);
+    }
+  }
+
+  /**
+   * Pop the latest backup from the stack. Returns it and removes it.
+   */
+  public popBackup(pathHash: string): ShadowBackupRecord | null {
+    const row = this.db.prepare(
+      'SELECT * FROM shadow_backups WHERE path_hash = ? ORDER BY version DESC LIMIT 1'
+    ).get(pathHash) as ShadowBackupRecord | undefined;
+    if (!row) return null;
+    this.db.prepare(
+      'DELETE FROM shadow_backups WHERE path_hash = ? AND version = ?'
+    ).run(pathHash, row.version);
+    return row;
+  }
+
+  /**
+   * Peek at the latest backup without removing it.
+   */
   public getBackup(pathHash: string): ShadowBackupRecord | null {
-    const row = this.db.prepare('SELECT * FROM shadow_backups WHERE path_hash = ?').get(pathHash);
+    const row = this.db.prepare(
+      'SELECT * FROM shadow_backups WHERE path_hash = ? ORDER BY version DESC LIMIT 1'
+    ).get(pathHash);
     return row ? (row as unknown as ShadowBackupRecord) : null;
   }
 
+  /**
+   * Count how many backup versions exist for a file.
+   */
+  public getBackupDepth(pathHash: string): number {
+    const row = this.db.prepare(
+      'SELECT COUNT(*) as c FROM shadow_backups WHERE path_hash = ?'
+    ).get(pathHash) as { c: number };
+    return row?.c ?? 0;
+  }
+
+  /** @deprecated Use pushBackup instead. Kept for callers that haven't migrated yet. */
   public upsertBackup(backup: ShadowBackupRecord) {
-    this.db.prepare(`
-      INSERT INTO shadow_backups (path_hash, original_path, content)
-      VALUES (?, ?, ?)
-      ON CONFLICT(path_hash) DO UPDATE SET
-        content = excluded.content
-    `).run(
-      backup.path_hash,
-      backup.original_path,
-      backup.content
-    );
+    this.pushBackup(backup);
   }
 
   public removeBackup(pathHash: string) {

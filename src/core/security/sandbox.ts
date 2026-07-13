@@ -6,7 +6,11 @@ import * as crypto from 'crypto';
 import { EgressProxy, TIER1_DOMAINS, detectTier2Domains } from './proxy.js';
 import { AllowedPath } from './types.js';
 
-const BLACKLIST = new Set(['sudo', 'su', 'docker', 'podman', 'mount', 'umount', 'nsenter', 'unshare']);
+const BLACKLIST = new Set([
+  'sudo', 'su', 'docker', 'podman', 'mount', 'umount', 'nsenter', 'unshare',
+  'shutdown', 'reboot', 'poweroff', 'dd', 'fdisk', 'mkfs', 'iptables', 'ufw',
+  'nerdctl', 'runc', 'containerd'
+]);
 
 const SECRET_PATTERNS = [
   /AKIA[0-9A-Z]{16}/g, // AWS Access Key ID
@@ -416,42 +420,17 @@ export class DirectiveSandbox {
   }
 
   /**
-   * Initializes the Sandbox, starting the egress proxy.
+   * Initializes the Sandbox (egress proxy retired).
    */
   public async initialize(tier3Domains: string[] = [], options?: { silent?: boolean }) {
-    // Collect allowed domains (Tier 1 + Tier 2 + Tier 3)
-    const allowed = new Set<string>(TIER1_DOMAINS);
-    
-    // Tier 2: Lockfiles auto-detection
-    const tier2 = detectTier2Domains(this.workspaceRoot);
-    for (const d of tier2) {
-      allowed.add(d);
-    }
-
-    // Tier 3: User config
-    for (const d of tier3Domains) {
-      allowed.add(d);
-    }
-
-    this.egressProxy = new EgressProxy(allowed);
-    this.proxyPort = await this.egressProxy.start();
-    if (!options?.silent) {
-      if (this.onSystemMessage) {
-        this.onSystemMessage('info', `Egress proxy started on port ${this.proxyPort}`);
-      } else {
-        console.log(`  [Directive Sandbox] Egress proxy started on port ${this.proxyPort}`);
-      }
-    }
+    // Egress proxy retired to prevent network build blockages
   }
 
   /**
    * Clean up the egress proxy when the sandbox session ends.
    */
   public stop() {
-    if (this.egressProxy) {
-      this.egressProxy.stop();
-      this.egressProxy = null;
-    }
+    // Egress proxy retired
   }
 
   public clearLoopHistory() {
@@ -537,99 +516,10 @@ export class DirectiveSandbox {
     const ulimitPrefix = 'ulimit -n 2048';
     const innerCommand = `${ulimitPrefix} && ${trimmedCommand}`;
 
-    // 5. Setup sandboxing engine wrapping command
-    let execCommand = '/bin/sh';
-    let execArgs = ['-c', innerCommand];
-    let tempSeatbeltProfile: string | null = null;
-
-    const hasSeatbelt = process.platform === 'darwin' && this.isCommandAvailable('sandbox-exec');
-    const hasBubblewrap = process.platform === 'linux' && this.isCommandAvailable('bwrap');
-
-    if (hasSeatbelt) {
-      // macOS Seatbelt sandbox
-      tempSeatbeltProfile = path.join(os.tmpdir(), `seatbelt-${crypto.randomBytes(8).toString('hex')}.sb`);
-      
-      let seatbeltMounts = '';
-      for (const entry of this.allowedPaths) {
-        const absPath = path.resolve(entry.path);
-        if (!fs.existsSync(absPath)) {
-          if (this.onSystemMessage) {
-            this.onSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
-          }
-          continue;
-        }
-        if (entry.mode === 'rw') {
-          seatbeltMounts += `  (allow file-write* (subpath "${absPath}"))\n`;
-          seatbeltMounts += `  (allow file-read* (subpath "${absPath}"))\n`;
-        } else {
-          seatbeltMounts += `  (allow file-read* (subpath "${absPath}"))\n`;
-        }
-      }
-
-      const profileContent = `(version 1)
-(allow default)
-(deny file-write*)
-(allow file-write*
-  (literal "/dev/null")
-  (literal "/dev/zero")
-  (subpath "/dev")
-  (subpath "/private/tmp")
-  (subpath "/tmp")
-  (subpath "${this.workspaceRoot}")
-)
-${seatbeltMounts}`;
-      fs.writeFileSync(tempSeatbeltProfile, profileContent, 'utf-8');
-      
-      execCommand = 'sandbox-exec';
-      execArgs = ['-f', tempSeatbeltProfile, '/bin/sh', '-c', innerCommand];
-    } else if (hasBubblewrap) {
-      // Linux bubblewrap sandbox
-      const mountArgs: string[] = [];
-      for (const entry of this.allowedPaths) {
-        const absPath = path.resolve(entry.path);
-        if (!fs.existsSync(absPath)) {
-          if (this.onSystemMessage) {
-            this.onSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
-          }
-          continue;
-        }
-        if (entry.mode === 'rw') {
-          mountArgs.push('--bind', absPath, absPath);
-        } else {
-          mountArgs.push('--ro-bind', absPath, absPath);
-        }
-      }
-
-      execCommand = 'bwrap';
-      execArgs = [
-        '--ro-bind', '/', '/',
-        '--bind', '/tmp', '/tmp',
-        '--bind', this.workspaceRoot, this.workspaceRoot,
-        ...mountArgs,
-        '--dev-bind', '/dev', '/dev',
-        '--proc', '/proc',
-        '--unshare-all',
-        '--share-net',
-        '/bin/sh', '-c', innerCommand
-      ];
-    } else {
-      if (this.strictSandbox) {
-        return '[DIRECTIVE AI] Sandboxing is strictly required, but neither bwrap nor sandbox-exec is available. Terminating command execution (fails closed).';
-      }
-      if (this.onSystemMessage) {
-        this.onSystemMessage('warn', 'Sandboxing engines bwrap or sandbox-exec not available. Running in un-isolated mode with resource limits.');
-      }
-    }
-
-    // 6. Spawn process with proxy configuration
-    const proxyUrl = `http://127.0.0.1:${this.proxyPort}`;
-    const env = {
-      ...process.env,
-      HTTP_PROXY: proxyUrl,
-      HTTPS_PROXY: proxyUrl,
-      http_proxy: proxyUrl,
-      https_proxy: proxyUrl
-    };
+    // 5. Execute standard direct spawn on host shell (egress proxy and containers retired)
+    const execCommand = '/bin/sh';
+    const execArgs = ['-c', innerCommand];
+    const env = { ...process.env };
 
     return new Promise((resolve) => {
       let outputBuffer = '';
@@ -668,19 +558,6 @@ ${seatbeltMounts}`;
       child.on('close', (code) => {
         clearTimeout(timeoutTimer);
 
-        // Delete temporary seatbelt file if created
-        if (tempSeatbeltProfile && fs.existsSync(tempSeatbeltProfile)) {
-          try {
-            fs.unlinkSync(tempSeatbeltProfile);
-          } catch (e: any) {
-            if (this.onSystemMessage) {
-              this.onSystemMessage('warn', `Failed to delete temporary seatbelt profile: ${e.message}`);
-            } else {
-              console.warn(`[Directive Sandbox] Failed to delete temporary seatbelt profile: ${e.message}`);
-            }
-          }
-        }
-
         let result = outputBuffer;
         if (killed) {
           result += '\n[Directive AI] Process terminated: execution timed out after 30 seconds.';
@@ -700,17 +577,6 @@ ${seatbeltMounts}`;
 
       child.on('error', (err) => {
         clearTimeout(timeoutTimer);
-        if (tempSeatbeltProfile && fs.existsSync(tempSeatbeltProfile)) {
-          try {
-            fs.unlinkSync(tempSeatbeltProfile);
-          } catch (e: any) {
-            if (this.onSystemMessage) {
-              this.onSystemMessage('warn', `Failed to delete temporary seatbelt profile: ${e.message}`);
-            } else {
-              console.warn(`[Directive Sandbox] Failed to delete temporary seatbelt profile: ${e.message}`);
-            }
-          }
-        }
         resolve(`[Directive AI Sandbox] Execution failed to start: ${err.message}`);
       });
     });
