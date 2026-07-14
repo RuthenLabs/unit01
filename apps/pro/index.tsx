@@ -1101,6 +1101,91 @@ ${activeChanges}`;
         return;
       }
 
+      if (command === '/diff') {
+        const { execSync } = await import('child_process');
+        let rawDiff = '';
+        try {
+          rawDiff = execSync('git diff HEAD', { cwd: workspaceRoot, encoding: 'utf-8', stdio: ['pipe','pipe','pipe'] });
+        } catch {
+          try {
+            rawDiff = execSync('git diff', { cwd: workspaceRoot, encoding: 'utf-8', stdio: ['pipe','pipe','pipe'] });
+          } catch {
+            ui.printSystemMessage('info', 'No git repository found or no changes to show.');
+            return;
+          }
+        }
+
+        if (!rawDiff.trim()) {
+          ui.printSystemMessage('info', 'No changes since last commit. Workspace is clean.');
+          return;
+        }
+
+        // Parse unified diff
+        const fileBlocks: { filePath: string; lines: string[] }[] = [];
+        let currentBlock: { filePath: string; lines: string[] } | null = null;
+        let totalAdded = 0;
+        let totalRemoved = 0;
+        let filesChanged = 0;
+
+        for (const rawLine of rawDiff.split('\n')) {
+          if (rawLine.startsWith('diff --git')) {
+            if (currentBlock) fileBlocks.push(currentBlock);
+            const match = rawLine.match(/diff --git a\/.+ b\/(.+)/);
+            const fp = match ? match[1] : 'unknown';
+            currentBlock = { filePath: fp, lines: [] };
+            filesChanged++;
+          } else if (currentBlock && !rawLine.startsWith('index ') && !rawLine.startsWith('---') && !rawLine.startsWith('+++') && !rawLine.startsWith('Binary')) {
+            currentBlock.lines.push(rawLine);
+            if (rawLine.startsWith('+') && !rawLine.startsWith('+++')) totalAdded++;
+            if (rawLine.startsWith('-') && !rawLine.startsWith('---')) totalRemoved++;
+          }
+        }
+        if (currentBlock) fileBlocks.push(currentBlock);
+
+        const divider = themeBorder('────────────────────────────────────────');
+        const header  = chalk.hex('#C084FC')('◈ unit01  ·  session diff');
+        const summary = chalk.hex('#64748B')(
+          `${filesChanged} file${filesChanged !== 1 ? 's' : ''} changed  ·  ` +
+          chalk.hex('#10B981')(`+${totalAdded} insertion${totalAdded !== 1 ? 's' : ''}`) + '  ·  ' +
+          chalk.hex('#F87171')(`-${totalRemoved} deletion${totalRemoved !== 1 ? 's' : ''}`)
+        );
+
+        const outputLines: string[] = [
+          '',
+          `  ${divider}`,
+          `  ${header}`,
+          `  ${divider}`,
+          `  ${summary}`,
+        ];
+
+        for (const block of fileBlocks) {
+          outputLines.push('');
+          outputLines.push(`  ${chalk.hex('#38BDF8')('◆')} ${chalk.hex('#38BDF8')(block.filePath)}`);
+          outputLines.push(`  ${themeBorder('─'.repeat(Math.min(block.filePath.length + 4, 60))}`);
+
+          for (const line of block.lines) {
+            if (line.startsWith('@@')) {
+              outputLines.push(`  ${chalk.hex('#64748B')(line)}`);
+            } else if (line.startsWith('+')) {
+              outputLines.push(`  ${chalk.bgHex('#0a2a1a')(chalk.hex('#10B981')(line.padEnd(80)))}`);
+            } else if (line.startsWith('-')) {
+              outputLines.push(`  ${chalk.bgHex('#2a0a0a')(chalk.hex('#F87171')(line.padEnd(80)))}`);
+            } else if (line.trim()) {
+              outputLines.push(`  ${chalk.hex('#94A3B8')(line)}`);
+            }
+          }
+        }
+
+        outputLines.push('');
+        outputLines.push(`  ${divider}`);
+        outputLines.push(`  ${chalk.hex('#64748B')('→ git add -p to stage selectively  ·  git commit when ready')}`);
+        outputLines.push(`  ${divider}`);
+        outputLines.push('');
+
+        ui.addTextOutput(outputLines.join('\n'));
+        return;
+      }
+
       if (command === '/status') {
         const activeRepoMap = indexer.getRepoMap();
         const activeChanges = indexer.getRecentChanges();
@@ -1228,6 +1313,7 @@ ${activeChanges}`;
           { cmd: '/reset-password', desc: 'reset the master password of the credentials vault' },
           { cmd: '/search',      desc: 'search codebase  |  /search <provider> (web search)  |  /search limit <N> (result limit)' },
           { cmd: '/sessions',    desc: 'browse and manage saved sessions' },
+          { cmd: '/diff',        desc: 'show a colored diff of all session changes' },
           { cmd: '/status',      desc: 'show system status info' },
           { cmd: '/thinking',    desc: 'toggle model reasoning blocks' },
           { cmd: '/undo',        desc: 'revert the last file write' },
