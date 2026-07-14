@@ -761,7 +761,7 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
       const chatResult = await ollama.chatStream(
         activeModel,
         summarisationPayload,
-        userContextLimit,
+        userContextLimit > 0 ? userContextLimit : modelContextWindow,
         () => {},
         new AbortController().signal
       );
@@ -994,7 +994,7 @@ ${activeChanges}`;
           const chatResult = await ollama.chatStream(
             activeModel,
             payload,
-            userContextLimit,
+            userContextLimit > 0 ? userContextLimit : modelContextWindow,
             (chunk) => {
               ui.onStreamChunk(chunk);
             },
@@ -2059,7 +2059,7 @@ ${toolLines.join('\n')}\n`);
         const chatResult = await ollama.chatStream(
           activeModel,
           activePayload,
-          userContextLimit,
+          userContextLimit > 0 ? userContextLimit : modelContextWindow,
           (chunk) => {
             streamAccumulator += chunk;
             if (hasRepetitionLoop(streamAccumulator)) {
