@@ -38,18 +38,25 @@ export async function validateServiceToken(service: string, token: string): Prom
         const data = (await res.json()) as any;
         return res.ok && data.ok === true;
       }
-      case 'discord': {
-        const res = await fetch('https://discord.com/api/v10/users/@me', {
+      case 'linear': {
+        const res = await fetch('https://api.linear.app/graphql', {
+          method: 'POST',
           headers: {
-            'Authorization': `Bot ${token}`
+            'Content-Type': 'application/json',
+            'Authorization': token
+          },
+          body: JSON.stringify({ query: '{ viewer { id name } }' })
+        });
+        const data = (await res.json()) as any;
+        return res.ok && !data.errors?.length;
+      }
+      case 'sentry': {
+        const res = await fetch('https://sentry.io/api/0/auth/', {
+          headers: {
+            'Authorization': `Bearer ${token}`
           }
         });
-        return res.ok;
-      }
-      case 'telegram': {
-        const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-        const data = (await res.json()) as any;
-        return res.ok && data.ok === true;
+        return res.ok || res.status === 400; // 400 = authenticated but bad endpoint (still valid token)
       }
       case 'notion': {
         const res = await fetch('https://api.notion.com/v1/users/me', {

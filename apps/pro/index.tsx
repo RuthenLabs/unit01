@@ -1121,6 +1121,29 @@ ${activeChanges}`;
           return absolutePath;
         };
 
+        const { isServiceConnected } = await import('../../src/core/tier.js');
+
+        const integrationList = [
+          { id: 'github',  label: 'GitHub'  },
+          { id: 'slack',   label: 'Slack'   },
+          { id: 'linear',  label: 'Linear'  },
+          { id: 'sentry',  label: 'Sentry'  },
+          { id: 'notion',  label: 'Notion'  },
+          { id: 'tavily',  label: 'Tavily'  },
+          { id: 'brave',   label: 'Brave'   },
+          { id: 'exa',     label: 'Exa'     },
+          { id: 'jina',    label: 'Jina'    },
+          { id: 'serper',  label: 'Serper'  },
+        ];
+
+        const connectedLabel   = chalk.hex('#10B981')('● connected');
+        const disconnectedLabel = chalk.hex('#475569')('○ not connected');
+
+        const integrationLines = integrationList.map(svc => {
+          const status = isServiceConnected(svc.id) ? connectedLabel : disconnectedLabel;
+          return `  ${chalk.hex('#64748B')(svc.label.padEnd(11))}${status}`;
+        });
+
         const out = [
           '',
           `  ${divider}`,
@@ -1131,12 +1154,16 @@ ${activeChanges}`;
           `  ${chalk.hex('#64748B')('workspace'.padEnd(11))}${tildify(workspaceRoot)}`,
           `  ${chalk.hex('#64748B')('branch'.padEnd(11))}${gitBranch}`,
           `  ${chalk.hex('#64748B')('files'.padEnd(11))}${filesCount}`,
+          '',
+          `  ${themeBorder('──  integrations  ──────────────────────')}`,
+          ...integrationLines,
           ''
         ].join('\n');
 
         ui.addTextOutput(out);
         return;
       }
+
 
       if (command === '/usage') {
         const activeRepoMap = indexer.getRepoMap();
@@ -2543,39 +2570,34 @@ ${toolLines.join('\n')}\n`);
         
         if (autopilotEnabled && toolResult.toolRun && hasEditedFiles) {
           const testCommand = config.test_command || detectTestCommand(workspaceRoot);
-          ui.printSystemMessage('info', `🤖 [Autopilot] Verifying edits with test command: "${testCommand}"...`);
+          ui.printSystemMessage('info', `🤖 [Autopilot] Starting structured build pipeline: "${testCommand}"...`);
           try {
-            const { exec } = await import('child_process');
-            const { promisify } = await import('util');
-            const execPromise = promisify(exec);
+            const { StructuredBuildPipeline } = await import('../../src/pro/autopilot/pipeline.js');
+            const pipeline = new StructuredBuildPipeline(workspaceRoot, testCommand, 8);
 
-            let passed = false;
-            let output = '';
-            try {
-              const { stdout, stderr } = await execPromise(testCommand, {
-                cwd: workspaceRoot,
-                env: { ...process.env, CI: 'true' }
-              });
-              passed = true;
-              output = stdout + (stderr || '');
-            } catch (err: any) {
-              passed = false;
-              output = (err.stdout || '') + (err.stderr || '') + (err.message || '');
-            }
+            const result = await pipeline.executePipeline(
+              async () => {}, // edits already applied — no-op
+              async (errorLog: string) => {
+                // Feed error to the model for self-healing
+                toolResult.nextPrompt = `<tool_output>\nAutopilot verification command "${testCommand}" failed with output:\n${errorLog.substring(0, 3000)}\n</tool_output>`;
+                toolResult.toolRun = true;
+                conversationHistory.push({ role: 'assistant', content: modelResponse });
+                conversationHistory.push({ role: 'user', content: toolResult.nextPrompt });
+                await runAgentLoop();
+                return true;
+              }
+            );
 
-            if (passed) {
-              ui.printSystemMessage('info', '🤖 [Autopilot] Verification passed successfully!');
-              sendDesktopNotification("Autopilot Success 🤖", `Verification passed for command: "${testCommand}"`);
+            if (result.success) {
+              sendDesktopNotification('Autopilot Success 🤖', `All checks passed after ${result.iterations} iteration(s).`);
             } else {
-              ui.printSystemMessage('error', '🤖 [Autopilot] Verification failed. Self-healing trace generated.');
-              sendDesktopNotification("Autopilot Verification Failed ⚠️", `Self-healing in progress for: "${testCommand}"`);
-              toolResult.nextPrompt = `<tool_output>\nAutopilot verification command "${testCommand}" failed with output:\n${output.substring(0, 3000)}\n</tool_output>`;
-              toolResult.toolRun = true;
+              sendDesktopNotification('Autopilot Halted ⚠️', `Pipeline stopped after ${result.iterations} iteration(s). Manual review needed.`);
             }
           } catch (e: any) {
-            ui.printSystemMessage('error', `🤖 [Autopilot] Verification execution failed: ${e.message}`);
+            ui.printSystemMessage('error', `🤖 [Autopilot] Pipeline execution failed: ${e.message}`);
           }
         }
+
 
         if (toolResult.toolRun) {
           if (useNativeTools && chatResult.tool_calls && chatResult.tool_calls.length > 0) {
