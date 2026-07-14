@@ -2,8 +2,10 @@
  * src/core/tier.ts
  *
  * Single source of truth for free vs. pro tier detection.
- * Pro is active when the user has a 'pro-license' token in their keychain/vault,
- * OR when they have any premium search API key (Tavily, Exa, Jina, Serper).
+ * Pro is active when:
+ *   1. The /src/pro directory exists (PRO repo distribution — free repo omits this dir), OR
+ *   2. The user has a 'pro-license' token stored in their macOS Keychain / Linux Secret Service.
+ * No other condition grants Pro status.
  */
 
 import * as path from 'path';
@@ -63,10 +65,6 @@ export function isPro(): boolean {
     }
   } catch (_) {}
 
-  if (process.env.UNIT01_PRO === '1' || process.env.UNIT01_PRO === 'true') {
-    _cachedIsPro = true;
-    return true;
-  }
 
   if (process.platform === 'darwin') {
     try {
@@ -78,13 +76,7 @@ export function isPro(): boolean {
       })();
       if (proLicense) { _cachedIsPro = true; return true; }
 
-      const premiumKeys = ['tavily', 'exa', 'jina', 'serper'];
-      for (const key of premiumKeys) {
-        try {
-          const val = execSync(`security find-generic-password -s "${key}" -w 2>/dev/null`, { stdio: 'pipe' }).toString().trim();
-          if (val) { _cachedIsPro = true; return true; }
-        } catch {}
-      }
+
     } catch {}
   }
 
@@ -97,7 +89,7 @@ export function isPro(): boolean {
           return !!val;
         } catch { return false; }
       };
-      if (check('pro-license') || check('tavily') || check('exa') || check('jina') || check('serper')) {
+      if (check('pro-license')) {
         _cachedIsPro = true;
         return true;
       }

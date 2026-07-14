@@ -39,36 +39,6 @@ export async function appendNotionBlocks(blockId: string, children: any[]): Prom
 }
 
 /**
- * Query a Notion database.
- */
-export async function queryNotionDatabase(databaseId: string, filter?: any): Promise<any[]> {
-  const token = getNotionToken();
-  if (!token) throw new Error('Notion is not connected. Use /connect notion first.');
-
-  const response = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Notion-Version': '2022-06-28',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(filter ? { filter } : {})
-  });
-
-  if (response.status === 401) {
-    disconnectService('notion');
-    disconnectService('notion-token');
-    throw new Error('[Authentication Error] Stored token for notion is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect notion" to re-authenticate.');
-  }
-
-  if (!response.ok) {
-    throw new Error(`Notion API error: Status ${response.status}`);
-  }
-  const data = (await response.json()) as any;
-  return data.results || [];
-}
-
-/**
  * Fetch a single page from Notion.
  */
 export async function fetchNotionPage(pageId: string): Promise<any> {

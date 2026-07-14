@@ -17,7 +17,6 @@ import { AllowedPath } from '../../src/core/security/types.js';
 import { SessionStore, SessionData, runStalenessCheck } from '../../src/core/session/index.js';
 import { handleToolCalls } from './commands.js';
 import { ProjectMemoryStore } from '../../src/pro/memory/index.js';
-import { AuditLogStore } from '../../src/pro/audit/index.js';
 import {
   themePrimary,
   themeOrange,
