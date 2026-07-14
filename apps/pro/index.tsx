@@ -17,6 +17,7 @@ import { AllowedPath } from '../../src/core/security/types.js';
 import { SessionStore, SessionData, runStalenessCheck } from '../../src/core/session/index.js';
 import { handleToolCalls } from './commands.js';
 import { ProjectMemoryStore } from '../../src/pro/memory/index.js';
+import { AuditLogStore } from '../../src/pro/audit/index.js';
 import {
   themePrimary,
   themeOrange,
@@ -1161,7 +1162,7 @@ ${activeChanges}`;
         for (const block of fileBlocks) {
           outputLines.push('');
           outputLines.push(`  ${chalk.hex('#38BDF8')('◆')} ${chalk.hex('#38BDF8')(block.filePath)}`);
-          outputLines.push(`  ${themeBorder('─'.repeat(Math.min(block.filePath.length + 4, 60))}`);
+          outputLines.push(`  ${themeBorder('─'.repeat(Math.min(block.filePath.length + 4, 60)))}`);
 
           for (const line of block.lines) {
             if (line.startsWith('@@')) {
@@ -2101,7 +2102,7 @@ ${activeChanges}`;
           return;
         }
         let out = `\nRecent Activity Audit Logs:\n`;
-        logs.forEach(l => {
+        logs.forEach((l: any) => {
           const time = new Date(l.timestamp).toLocaleTimeString();
           const statusText = l.status === 'completed' || l.status === 'approved' 
             ? chalk.green(l.status) 
