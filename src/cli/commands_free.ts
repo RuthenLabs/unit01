@@ -4,11 +4,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { DirectiveIndexer } from '../core/indexer/index.js';
-import { DirectiveSandbox } from '../core/security/sandbox.js';
-import { buildRepoMap } from '../core/indexer/repomap.js';
-import { AllowedPath } from '../core/security/types.js';
-import { ChunkRecord } from '../core/database/db.js';
+import { DirectiveIndexer } from '../../src/core/indexer/index.js';
+import { DirectiveSandbox } from '../../src/core/security/sandbox.js';
+import { buildRepoMap } from '../../src/core/indexer/repomap.js';
+import { AllowedPath } from '../../src/core/security/types.js';
+import { ChunkRecord } from '../../src/core/database/db.js';
 import {
   themePrimary,
   themeOrange,
@@ -17,8 +17,8 @@ import {
   themeRed,
   isGui,
   guiEmit
-} from './views/theme.js';
-import { UiAdapter } from './types.js';
+} from '../../src/cli/views/theme.js';
+import { UiAdapter } from '../../src/cli/types.js';
 
 
 import {
@@ -27,6 +27,7 @@ import {
   parseReadFile,
   parseSearchCode,
   parseWebSearch,
+  parseFetchWebpage,
   parsePatchFile,
   parsePatchFileBlocks,
   parseListDir,
@@ -44,7 +45,7 @@ import {
   parseDeleteFile,
   parseMakeDir,
   parseCopyFile
-} from './parser.js';
+} from '../../src/cli/parser.js';
 
 export interface CliState {
   lastWrittenFile: {
@@ -103,7 +104,8 @@ export async function handleToolCalls(
   sandbox: DirectiveSandbox,
   indexer: DirectiveIndexer,
   ui: UiAdapter,
-  state: CliState
+  state: CliState,
+  fileReadCache?: Map<string, string>
 ): Promise<{ toolRun: boolean; nextPrompt: string; consoleOutput: string }> {
   // Parse and validate all XML/HTML tags
   const openTagRegex = /<([a-zA-Z_][a-zA-Z0-9_\-]*)([^>]*)>/g;
@@ -114,10 +116,15 @@ export async function handleToolCalls(
     
     // Check if tag is a tool
     const isTool = [
-      'run_command', 'read_file', 'write_file', 'patch_file', 'patch_file_blocks',
-      'delete_file', 'list_dir', 'search_code', 'web_search', 'view_outline',
-      'ask_user', 'move_file', 'git_status', 'diagnostics',
-      'sandbox_exec', 'question', 'path_question', 'mcp_tool'
+      'run_command', 'read_file', 'write_file', 'search_code', 'web_search', 'fetch_webpage',
+      'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics',
+      'move_file', 'think', 'question', 'path_question',
+      'delete_file', 'view_outline', 'ask_user', 'make_dir', 'copy_file',
+      'mcp_tool', 'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents', 'github_rename_repo',
+      'slack_get_history', 'slack_post_message',
+      'discord_get_history', 'discord_post_message',
+      'notion_get_page', 'notion_append_blocks',
+      'telegram_get_updates', 'telegram_post_message'
     ].includes(tagName);
     
     if (isTool) {
@@ -203,7 +210,19 @@ export async function handleToolCalls(
       ui.printToolResult('success', `Deleted ${deletePath}`);
 
       // Pro Auditing
-      
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        auditStore.logAction({
+          service: 'file_delete',
+          operation: 'delete_file',
+          target: absPath,
+          payload_summary: `Deleted ${deletePath}`,
+          payload_hash: crypto.createHash('sha256').update(deletePath).digest('hex'),
+          status: 'completed'
+        });
+      } catch (_) {}
 
       return {
         toolRun: true,
@@ -562,7 +581,20 @@ export async function handleToolCalls(
     if (output.startsWith('[DIRECTIVE AI]')) {
       ui.printToolResult('failure', `Ran: ${cmd} (blocked)`);
       ui.printSystemMessage('guard', `command blocked  ·  ${cmd}`);
-      
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
+        auditStore.logAction({
+          service: 'shell',
+          operation: 'execute_script',
+          target: cmd,
+          payload_summary: `Command blocked by sandbox: ${cmd}`,
+          payload_hash: payloadHash,
+          status: 'denied'
+        });
+      } catch (_) {}
       return {
         toolRun: false,
         nextPrompt: '',
@@ -572,7 +604,20 @@ export async function handleToolCalls(
 
     if (output.startsWith('{') && output.includes('FILE_NOT_WRITTEN')) {
       ui.printToolResult('failure', `Ran: ${cmd} (failed: file not written)`);
-      
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
+        auditStore.logAction({
+          service: 'shell',
+          operation: 'execute_script',
+          target: cmd,
+          payload_summary: `Failed to execute command (file not written)`,
+          payload_hash: payloadHash,
+          status: 'failed'
+        });
+      } catch (_) {}
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${output}\n</tool_output>`,
@@ -584,7 +629,20 @@ export async function handleToolCalls(
       const match = output.match(/exit code (\d+)/);
       const exitCode = match ? match[1] : '1';
       ui.printToolResult('failure', `Ran: ${cmd} (exit ${exitCode})`);
-      
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
+        auditStore.logAction({
+          service: 'shell',
+          operation: 'execute_script',
+          target: cmd,
+          payload_summary: `Command failed with exit code ${exitCode}`,
+          payload_hash: payloadHash,
+          status: 'failed'
+        });
+      } catch (_) {}
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${output.trim()}\n</tool_output>`,
@@ -594,7 +652,20 @@ export async function handleToolCalls(
 
     ui.printToolResult('success', `Ran: ${cmd} (exit 0)`);
     const outputResult = output.trim() || 'Command executed successfully with no output.';
-    
+    try {
+      const crypto = await import('crypto');
+      const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+      const auditStore = new AuditLogStore(indexer.db);
+      const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
+      auditStore.logAction({
+        service: 'shell',
+        operation: 'execute_script',
+        target: cmd,
+        payload_summary: outputResult.length > 100 ? outputResult.substring(0, 100) + '...' : outputResult,
+        payload_hash: payloadHash,
+        status: 'completed'
+      });
+    } catch (_) {}
     return {
       toolRun: true,
       nextPrompt: `<tool_output>\n${outputResult}\n</tool_output>`,
@@ -693,7 +764,22 @@ export async function handleToolCalls(
       
       ui.hideToolProgress();
       ui.printToolResult('success', `Wrote ${filePath} (${lineCount} lines)`);
-      
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(content).digest('hex');
+        auditStore.logAction({
+          service: 'file_write',
+          operation: 'write_file',
+          target: absPath,
+          payload_summary: `Wrote ${lineCount} lines to ${filePath}`,
+          payload_hash: payloadHash,
+          status: 'completed'
+        });
+      } catch (_) {}
+      // Evict stale cache entry so next read_file sees fresh content
+      if (fileReadCache) fileReadCache.delete(absPath);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully written and indexed at ${filePath}\n</tool_output>`,
@@ -735,14 +821,23 @@ export async function handleToolCalls(
     
     let content = '';
     let success = false;
+    let servedFromCache = false;
     try {
-      if (fs.existsSync(absPath)) {
+      // ── Cache-first: if we already loaded this file this session, serve from RAM ──
+      const cached = fileReadCache?.get(absPath) ?? fileReadCache?.get(filePath);
+      if (cached !== undefined) {
+        content = cached;
+        success = true;
+        servedFromCache = true;
+      } else if (fs.existsSync(absPath)) {
         const stat = fs.statSync(absPath);
         if (stat.isDirectory()) {
           content = `Error: ${filePath} is a directory. Use run_command with shell commands like 'ls' or 'find' to inspect its contents.`;
         } else {
           content = fs.readFileSync(absPath, 'utf-8');
           success = true;
+          // Populate cache for future reads this session
+          if (fileReadCache) fileReadCache.set(absPath, content);
         }
       } else {
         content = `Error: File not found at ${filePath}`;
@@ -753,7 +848,8 @@ export async function handleToolCalls(
     
     ui.hideToolProgress();
     if (success) {
-      ui.printToolResult('success', `Read ${filePath} (${content.split('\n').length} lines)`);
+      const cacheTag = servedFromCache ? ' [cached]' : '';
+      ui.printToolResult('success', `Read ${filePath} (${content.split('\n').length} lines${cacheTag})`);
     } else {
       ui.printToolResult('failure', `Read ${filePath} (failed)`);
     }
@@ -779,17 +875,30 @@ export async function handleToolCalls(
     }
     process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('search')} index for "${query}" ...`);
     
-    const results = indexer.search(query);
+    let results: ChunkRecord[] = [];
+    let isHybrid = false;
+    try {
+      const { executeHybridSearch } = await import('../../src/pro/search/index.js');
+      results = await executeHybridSearch(indexer.db, query);
+      isHybrid = true;
+    } catch (e) {
+      results = indexer.search(query);
+    }
+    
     ui.hideToolProgress();
-    ui.printToolResult('success', `Searched "${query}" (${results.length} results)`);
+    ui.printToolResult('success', `${isHybrid ? 'Hybrid searched' : 'Searched'} "${query}" (${results.length} results)`);
     
     const formatted = results.slice(0, 5).map(r => 
       `- ${r.relpath} (line ${r.start_line}-${r.end_line}, type ${r.chunk_type}):\n${r.content}`
     ).join('\n\n');
-    
+
+    const totalNote = results.length > 5
+      ? `\nShowing top 5 of ${results.length} total matches. Refine your query to narrow results.`
+      : '';
+
     return {
       toolRun: true,
-      nextPrompt: `<tool_output>\nSearch results for "${query}":\n${formatted || 'No matches found'}\n</tool_output>`,
+      nextPrompt: `<tool_output>\nSearch results for "${query}" (${results.length} total):\n${formatted || 'No matches found'}${totalNote}\n</tool_output>`,
       consoleOutput: `\n[Search executed: "${query}"]`
     };
   }
@@ -807,43 +916,12 @@ export async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('web_search')} query "${query}" ...`);
+    ui.showToolProgress(`${themeAccent('web_search')} "${query}"...`);
     
     let results: any[] = [];
     try {
-      const { searchDuckDuckGo } = await import('../core/search.js');
-      let augmentedQuery = query;
-
-      // Smart Context Query Augmentation
-      const fs = await import('fs');
-      const path = await import('path');
-      const root = indexer.db.workspaceRoot;
-      const contextKeywords: string[] = [];
-
-      if (fs.existsSync(path.join(root, 'package.json'))) {
-        contextKeywords.push('nodejs');
-        try {
-          const pkgJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
-          if (pkgJson.dependencies?.['next']) contextKeywords.push('nextjs');
-          if (pkgJson.dependencies?.['react']) contextKeywords.push('react');
-          if (pkgJson.devDependencies?.['typescript'] || pkgJson.dependencies?.['typescript']) contextKeywords.push('typescript');
-        } catch (_) {}
-      } else if (fs.existsSync(path.join(root, 'Cargo.toml'))) {
-        contextKeywords.push('rust');
-      } else if (fs.existsSync(path.join(root, 'go.mod'))) {
-        contextKeywords.push('go');
-      } else if (fs.existsSync(path.join(root, 'pyproject.toml')) || fs.existsSync(path.join(root, 'requirements.txt'))) {
-        contextKeywords.push('python');
-      }
-
-      if (contextKeywords.length > 0) {
-        const missing = contextKeywords.filter(k => !query.toLowerCase().includes(k));
-        if (missing.length > 0) {
-          augmentedQuery = `${query} ${missing.join(' ')}`;
-        }
-      }
-
-      results = await searchDuckDuckGo(augmentedQuery);
+      const { executeWebSearch } = await import('../../src/pro/connect/integrations/search.js');
+      results = await executeWebSearch(query);
     } catch (e: any) {
       results = [];
     }
@@ -855,10 +933,73 @@ export async function handleToolCalls(
       `- ${r.title} (${r.url}):\n  ${r.snippet}`
     ).join('\n\n');
 
+    try {
+      const crypto = await import('crypto');
+      const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+      const auditStore = new AuditLogStore(indexer.db);
+      const payloadHash = crypto.createHash('sha256').update(query).digest('hex');
+      auditStore.logAction({
+        service: 'web-search',
+        operation: 'search',
+        target: query,
+        payload_summary: `Found ${results.length} snippets`,
+        payload_hash: payloadHash,
+        status: 'completed'
+      });
+    } catch (_) {}
+
     return {
       toolRun: true,
       nextPrompt: `<tool_output>\nWeb search results for "${query}":\n${formatted || 'No results found'}\n</tool_output>`,
       consoleOutput: `\n[Web search executed: "${query}"]`
+    };
+  }
+
+  const fetchWebpageUrl = parseFetchWebpage(text);
+  if (fetchWebpageUrl !== null) {
+    const url = fetchWebpageUrl.trim();
+    if (isGui) guiEmit({ type: 'tool-call', tool: 'fetch_webpage', url });
+    if (!url) {
+      ui.printToolResult('failure', `Fetched webpage (blocked: empty URL)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: URL cannot be empty.\n</tool_output>`,
+        consoleOutput: `\n[Fetch webpage blocked: empty URL]`
+      };
+    }
+
+    ui.showToolProgress(`${themeAccent('fetch_webpage')} ${url}...`);
+
+    let pageContent = '';
+    try {
+      const { executeFetchWebpage } = await import('../../src/pro/connect/integrations/search.js');
+      pageContent = await executeFetchWebpage(url);
+    } catch (e: any) {
+      pageContent = `Failed to fetch webpage content: ${e.message}`;
+    }
+
+    ui.hideToolProgress();
+    ui.printToolResult('success', `Fetched webpage: ${url}`);
+
+    try {
+      const crypto = await import('crypto');
+      const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+      const auditStore = new AuditLogStore(indexer.db);
+      const payloadHash = crypto.createHash('sha256').update(url).digest('hex');
+      auditStore.logAction({
+        service: 'web-fetch',
+        operation: 'fetch',
+        target: url,
+        payload_summary: `Fetched ${pageContent.length} chars`,
+        payload_hash: payloadHash,
+        status: 'completed'
+      });
+    } catch (_) {}
+
+    return {
+      toolRun: true,
+      nextPrompt: `<tool_output>\nContent of ${url}:\n${pageContent}\n</tool_output>`,
+      consoleOutput: `\n[Fetched webpage: "${url}"]`
     };
   }
 
@@ -936,7 +1077,20 @@ export async function handleToolCalls(
 
       ui.hideToolProgress();
       ui.printToolResult('success', `Patched ${filePath}`);
-      
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(updated).digest('hex');
+        auditStore.logAction({
+          service: 'file_patch',
+          operation: 'patch_file',
+          target: absPath,
+          payload_summary: `Patched ${filePath}`,
+          payload_hash: payloadHash,
+          status: 'completed'
+        });
+      } catch (_) {}
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully patched at ${filePath}\n</tool_output>`,
@@ -1030,7 +1184,22 @@ export async function handleToolCalls(
 
       ui.hideToolProgress();
       ui.printToolResult('success', `Patched ${filePath}`);
-      
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../../src/pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(updated).digest('hex');
+        auditStore.logAction({
+          service: 'file_patch',
+          operation: 'patch_file_blocks',
+          target: absPath,
+          payload_summary: `Patched blocks in ${filePath}`,
+          payload_hash: payloadHash,
+          status: 'completed'
+        });
+      } catch (_) {}
+      // Evict stale cache entry so next read_file sees fresh content
+      if (fileReadCache) fileReadCache.delete(absPath);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully patched using blocks at ${filePath}\n</tool_output>`,
@@ -1502,7 +1671,7 @@ export async function handleToolCalls(
     ui.showToolProgress(`${themePrimary('mcp')} ${themeOrange(serverId)} › ${toolName}...`);
 
     try {
-      const { McpClientManager } = await import('../core/mcp/client.js');
+      const { McpClientManager } = await import('../../src/core/mcp/client.js');
       const mcpManager = McpClientManager.getInstance();
       const result = await mcpManager.callTool(serverId, toolName, args);
       ui.hideToolProgress();
@@ -1524,6 +1693,238 @@ export async function handleToolCalls(
         toolRun: true,
         nextPrompt: `<tool_output>\nMCP error: ${err.message}\n</tool_output>`,
         consoleOutput: `\n[MCP error: ${err.message}]`
+      };
+    }
+  }
+
+  // ── Native Integration Tools ──
+  const integrations = [
+    'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents', 'github_rename_repo',
+    'slack_get_history', 'slack_post_message',
+    'linear_get_teams', 'linear_get_issues', 'linear_create_issue',
+    'sentry_get_orgs', 'sentry_get_issues', 'sentry_get_issue',
+    'notion_get_page', 'notion_append_blocks'
+  ];
+
+  const matches = [...text.matchAll(/<([a-zA-Z0-9_]+)\b/g)];
+  const matchedTag = integrations.find(tag => matches.some(m => m[1] === tag));
+  if (matchedTag) {
+    const isWrite = [
+      'github_create_issue', 'github_create_pr', 'github_rename_repo',
+      'slack_post_message', 'linear_create_issue',
+      'notion_append_blocks'
+    ].includes(matchedTag);
+
+    // Helpers to extract attributes and text bodies
+    const getAttr = (tag: string, attr: string): string => {
+      const re = new RegExp(`<${tag}[^>]*\\b${attr}=["']([^"']*)["']`, 'i');
+      const m = re.exec(text);
+      return m ? m[1] : '';
+    };
+
+    const getBody = (tag: string): string => {
+      const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\/${tag}>`, 'i');
+      const m = re.exec(text);
+      if (m) return m[1].trim();
+
+      // Fallback: if closing tag is missing, take everything after the opening tag
+      const openRe = new RegExp(`<${tag}[^>]*>([\\s\\S]*)$`, 'i');
+      const openMatch = openRe.exec(text);
+      return openMatch ? openMatch[1].trim() : '';
+    };
+
+    // Gating check
+    const { isPro } = await import('../../src/core/tier.js');
+    if (isWrite && !isPro()) {
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: Write operations on native integrations (${matchedTag}) are a Pro tier feature. Upgrade to Pro or configure MCP servers to perform write operations.\n</tool_output>`,
+        consoleOutput: `\n[Integration blocked (Free tier limit): ${matchedTag}]`
+      };
+    }
+
+    ui.showToolProgress(`Connecting service for ${matchedTag}...`);
+
+    try {
+      let output = '';
+      switch (matchedTag) {
+        case 'github_rename_repo': {
+          const owner = getAttr('github_rename_repo', 'owner');
+          const repo = getAttr('github_rename_repo', 'repo');
+          const newName = getAttr('github_rename_repo', 'new_name');
+          const { renameGitHubRepo } = await import('../../src/pro/connect/integrations/github.js');
+          const result = await renameGitHubRepo(owner, repo, newName);
+          output = JSON.stringify(result, null, 2);
+          break;
+        }
+        case 'github_get_contents': {
+          const owner = getAttr('github_get_contents', 'owner');
+          const repo = getAttr('github_get_contents', 'repo');
+          const pathStr = getAttr('github_get_contents', 'path');
+          const { fetchGitHubContents } = await import('../../src/pro/connect/integrations/github.js');
+          const contents = await fetchGitHubContents(owner, repo, pathStr);
+          output = typeof contents === 'string' ? contents : JSON.stringify(contents, null, 2);
+          break;
+        }
+        case 'github_list_repos': {
+          const { fetchGitHubRepos } = await import('../../src/pro/connect/integrations/github.js');
+          const repos = await fetchGitHubRepos();
+          output = JSON.stringify(repos, null, 2);
+          break;
+        }
+        case 'github_get_pr': {
+          const owner = getAttr('github_get_pr', 'owner');
+          const repo = getAttr('github_get_pr', 'repo');
+          const number = parseInt(getAttr('github_get_pr', 'number'));
+          const { fetchGitHubPullRequest } = await import('../../src/pro/connect/integrations/github.js');
+          const pr = await fetchGitHubPullRequest(owner, repo, number);
+          output = JSON.stringify(pr, null, 2);
+          break;
+        }
+        case 'github_create_issue': {
+          const owner = getAttr('github_create_issue', 'owner');
+          const repo = getAttr('github_create_issue', 'repo');
+          const title = getAttr('github_create_issue', 'title');
+          const body = getBody('github_create_issue');
+          const { createGitHubIssue } = await import('../../src/pro/connect/integrations/github.js');
+          const issue = await createGitHubIssue(owner, repo, title, body);
+          output = JSON.stringify(issue, null, 2);
+          break;
+        }
+        case 'github_create_pr': {
+          const owner = getAttr('github_create_pr', 'owner');
+          const repo = getAttr('github_create_pr', 'repo');
+          const title = getAttr('github_create_pr', 'title');
+          const head = getAttr('github_create_pr', 'head');
+          const base = getAttr('github_create_pr', 'base');
+          const body = getBody('github_create_pr');
+          const { createGitHubPullRequest } = await import('../../src/pro/connect/integrations/github.js');
+          const pr = await createGitHubPullRequest(owner, repo, title, head, base, body);
+          output = JSON.stringify(pr, null, 2);
+          break;
+        }
+        case 'slack_get_history': {
+          const channel = getAttr('slack_get_history', 'channel');
+          const limitStr = getAttr('slack_get_history', 'limit');
+          const limit = limitStr ? parseInt(limitStr) : 10;
+          const { fetchSlackMessages } = await import('../../src/pro/connect/integrations/slack.js');
+          const history = await fetchSlackMessages(channel, limit);
+          if (history.length === 0) {
+            output = `No messages found in Slack channel ${channel}.`;
+          } else {
+            output = history.map((m: any) => `[${m.user || 'User'}]: ${m.text}`).join('\n');
+          }
+          break;
+        }
+        case 'slack_post_message': {
+          const channel = getAttr('slack_post_message', 'channel');
+          const body = getBody('slack_post_message');
+          const { postSlackMessage } = await import('../../src/pro/connect/integrations/slack.js');
+          const res = await postSlackMessage(channel, body);
+          output = `Slack message posted successfully to channel ${channel} (TS: ${res.ts || 'unknown'}).`;
+          break;
+        }
+        case 'linear_get_teams': {
+          const { fetchLinearTeams } = await import('../../src/pro/connect/integrations/linear.js');
+          const teams = await fetchLinearTeams();
+          if (teams.length === 0) {
+            output = 'No Linear teams found in your workspace.';
+          } else {
+            output = teams.map(t => `[${t.key}] ${t.name} (ID: ${t.id})`).join('\n');
+          }
+          break;
+        }
+        case 'linear_get_issues': {
+          const teamId = getAttr('linear_get_issues', 'team_id');
+          const limitStr = getAttr('linear_get_issues', 'limit');
+          const limit = limitStr ? parseInt(limitStr) : 10;
+          const { fetchLinearIssues } = await import('../../src/pro/connect/integrations/linear.js');
+          const issues = await fetchLinearIssues(teamId || undefined, limit);
+          if (issues.length === 0) {
+            output = 'No issues found.';
+          } else {
+            output = issues.map(i =>
+              `[${i.identifier}] ${i.title} — ${i.state?.name || 'Unknown'} | Priority: ${i.priority} | Assignee: ${i.assignee?.name || 'Unassigned'}\n  ${i.url}`
+            ).join('\n\n');
+          }
+          break;
+        }
+        case 'linear_create_issue': {
+          const teamId = getAttr('linear_create_issue', 'team_id');
+          const title = getAttr('linear_create_issue', 'title');
+          const priorityStr = getAttr('linear_create_issue', 'priority');
+          const priority = priorityStr ? parseInt(priorityStr) : 0;
+          const description = getBody('linear_create_issue');
+          const { createLinearIssue } = await import('../../src/pro/connect/integrations/linear.js');
+          const issue = await createLinearIssue(title, description, teamId || undefined, priority);
+          output = `Linear issue created successfully!\n  ID: ${issue.identifier}\n  Title: ${issue.title}\n  URL: ${issue.url}`;
+          break;
+        }
+        case 'sentry_get_orgs': {
+          const { fetchSentryOrganizations } = await import('../../src/pro/connect/integrations/sentry.js');
+          const orgs = await fetchSentryOrganizations();
+          if (orgs.length === 0) {
+            output = 'No Sentry organizations found.';
+          } else {
+            output = orgs.map(o => `[${o.slug}] ${o.name}`).join('\n');
+          }
+          break;
+        }
+        case 'sentry_get_issues': {
+          const orgSlug = getAttr('sentry_get_issues', 'org_slug');
+          const projectSlug = getAttr('sentry_get_issues', 'project_slug');
+          const limitStr = getAttr('sentry_get_issues', 'limit');
+          const limit = limitStr ? parseInt(limitStr) : 10;
+          const { fetchSentryIssues } = await import('../../src/pro/connect/integrations/sentry.js');
+          const issues = await fetchSentryIssues(orgSlug || undefined, projectSlug || undefined, limit);
+          if (issues.length === 0) {
+            output = 'No unresolved Sentry issues found.';
+          } else {
+            output = issues.map(i =>
+              `[${i.level.toUpperCase()}] ${i.title}\n  Culprit: ${i.culprit}\n  Occurrences: ${i.count} | Users affected: ${i.userCount}\n  Last seen: ${i.lastSeen}\n  URL: ${i.url}`
+            ).join('\n\n');
+          }
+          break;
+        }
+        case 'sentry_get_issue': {
+          const issueId = getAttr('sentry_get_issue', 'issue_id');
+          const { fetchSentryIssueDetails } = await import('../../src/pro/connect/integrations/sentry.js');
+          const issue = await fetchSentryIssueDetails(issueId);
+          output = `[${issue.level.toUpperCase()}] ${issue.title}\nCulprit: ${issue.culprit}\nOccurrences: ${issue.count} | Users: ${issue.userCount}\nFirst seen: ${issue.firstSeen} | Last seen: ${issue.lastSeen}\nURL: ${issue.url}\n\nStack Trace (last 10 frames):\n${issue.stackTrace}`;
+          break;
+        }
+        case 'notion_get_page': {
+          const pageId = getAttr('notion_get_page', 'page_id');
+          const { fetchNotionPage } = await import('../../src/pro/connect/integrations/notion.js');
+          const page = await fetchNotionPage(pageId);
+          output = JSON.stringify(page, null, 2);
+          break;
+        }
+        case 'notion_append_blocks': {
+          const blockId = getAttr('notion_append_blocks', 'block_id');
+          const body = getBody('notion_append_blocks');
+          const { appendNotionBlocks } = await import('../../src/pro/connect/integrations/notion.js');
+          const children = JSON.parse(body);
+          const res = await appendNotionBlocks(blockId, children);
+          output = JSON.stringify(res, null, 2);
+          break;
+        }
+      }
+
+      ui.hideToolProgress();
+      ui.printToolResult('success', `${matchedTag}`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${output}\n</tool_output>`,
+        consoleOutput: `\n[Integration Success: ${matchedTag}]`
+      };
+    } catch (err: any) {
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `${matchedTag}`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nIntegration Error: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[Integration Failure: ${matchedTag} (${err.message})]`
       };
     }
   }

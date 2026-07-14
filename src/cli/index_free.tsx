@@ -1,5 +1,5 @@
 #!/usr/bin/env -S node --no-warnings
-import '../core/warnings.js';
+import '../../src/core/warnings.js';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -9,13 +9,15 @@ import { execSync } from 'child_process';
 import { render } from 'ink';
 import React from 'react';
 
-import { DirectiveIndexer } from '../core/indexer/index.js';
-import { DirectiveSandbox, redactSecrets } from '../core/security/sandbox.js';
-import { ollama } from '../core/llm/client.js';
-import { buildRepoMap } from '../core/indexer/repomap.js';
-import { AllowedPath } from '../core/security/types.js';
-import { SessionStore, SessionData, runStalenessCheck } from '../core/session/index.js';
-import { handleToolCalls } from './commands_free.js';
+import { DirectiveIndexer } from '../../src/core/indexer/index.js';
+import { DirectiveSandbox, redactSecrets } from '../../src/core/security/sandbox.js';
+import { ollama } from '../../src/core/llm/client.js';
+import { buildRepoMap } from '../../src/core/indexer/repomap.js';
+import { AllowedPath } from '../../src/core/security/types.js';
+import { SessionStore, SessionData, runStalenessCheck } from '../../src/core/session/index.js';
+import { handleToolCalls } from './commands.js';
+import { ProjectMemoryStore } from '../../src/pro/memory/index.js';
+import { AuditLogStore } from '../../src/pro/audit/index.js';
 import {
   themePrimary,
   themeOrange,
@@ -25,10 +27,10 @@ import {
   themeRed,
   isGui,
   guiEmit
-} from './views/theme.js';
-import { getLanguageFromFilename } from './parser.js';
-import { App } from './app.js';
-import { CoreServices, UiAdapter, CliState } from './types.js';
+} from '../../src/cli/views/theme.js';
+import { getLanguageFromFilename } from '../../src/cli/parser.js';
+import { App } from '../../src/cli/app.js';
+import { CoreServices, UiAdapter, CliState } from '../../src/cli/types.js';
 
 const PERSONALITY_TONES: Record<string, { label: string; instruction: string }> = {
   vanilla: {
@@ -172,6 +174,20 @@ const OLLAMA_TOOLS = [
           query: { type: 'string', description: 'Search query.' }
         },
         required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fetch_webpage',
+      description: 'Fetches the complete text content of a target URL and returns it in clean Markdown format.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The absolute HTTP or HTTPS URL to fetch.' }
+        },
+        required: ['url']
       }
     }
   },
@@ -329,6 +345,8 @@ function formatToolCallToXml(tc: any): string {
       return `<search_code>${args.query || ''}</search_code>`;
     case 'web_search':
       return `<web_search>${args.query || ''}</web_search>`;
+    case 'fetch_webpage':
+      return `<fetch_webpage>${args.url || ''}</fetch_webpage>`;
     case 'run_command':
       return `<run_command>${args.command || ''}</run_command>`;
     case 'view_outline':
@@ -365,22 +383,28 @@ TOOLS (use exactly as shown — real paths, not placeholders):
 <search_code>query</search_code>
 <run_command>command</run_command>
 <web_search>query</web_search>
+<fetch_webpage>url</fetch_webpage>
 <view_outline path="path" />
 <git_status />
 <diagnostics />
 <ask_user options="opt1, opt2">question</ask_user>
 <mcp_tool server="server-id" name="tool-name">{"arg": "value"}</mcp_tool>
 <github_get_pr owner="owner" repo="repo" number="123" />
+<github_list_repos />
+<github_get_contents owner="owner" repo="repo" path="path" />
+<github_rename_repo owner="owner" repo="repo" new_name="new-name" />
 <github_create_issue owner="owner" repo="repo" title="title">body</github_create_issue>
 <github_create_pr owner="owner" repo="repo" title="title" head="head" base="base">body</github_create_pr>
-<slack_get_history channel="C123" limit="10" />
-<slack_post_message channel="C123">text</slack_post_message>
-<discord_get_history channel="C123" limit="10" />
-<discord_post_message channel="C123">text</discord_post_message>
+<slack_get_history channel="C123" limit="10" /> (channel is optional, defaults to last-used channel)
+<slack_post_message channel="C123">text</slack_post_message> (channel is optional, defaults to last-used channel)
+<linear_get_teams />
+<linear_get_issues team_id="TEAM_ID" limit="10" /> (team_id is optional, defaults to last-used team)
+<linear_create_issue team_id="TEAM_ID" title="Bug: login crash" priority="1">description</linear_create_issue> (team_id optional)
+<sentry_get_orgs />
+<sentry_get_issues org_slug="my-org" project_slug="my-project" limit="10" /> (org_slug optional, defaults to last-used org)
+<sentry_get_issue issue_id="12345678" />
 <notion_get_page page_id="id" />
 <notion_append_blocks block_id="id">JSON_array_children</notion_append_blocks>
-<telegram_get_updates limit="10" />
-<telegram_post_message chat_id="id">text</telegram_post_message>
 
 RULES:
 - One tool per response. Output the tag, then stop. Never explain before calling a tool.
@@ -390,11 +414,14 @@ RULES:
 - When creating files, check [Repo Map] under [Directories] and ensure you place the file inside the correct subdirectory (e.g. write_file path="website/index.html"). Never default to the root workspace.
 - Implement ONE file per turn: after writing a file, do NOT output another tool tag. Instead, describe what you did in chat and ask the user for permission to write the next file.
 - Always wrap code snippets in your chat response inside fenced code blocks (using \`\`\`lang) so they format correctly with rounded borders.
-- Only use ask_user to ask the user something or request path access (options="Allow read-write, Allow read-only, Deny"). If you just want to respond to the user conversationally without running any action, output your response directly as plain text. Do NOT use the ask_user tool for regular questions or greetings.
+- Use ask_user ONLY to request external path access (using options="Allow read-write, Allow read-only, Deny"). For all regular conversational questions, clarifications, or inputs, output them directly as plain text in your chat response. Do NOT call the ask_user tool for conversational questions.
 - For tasks outside workspace: try access first, if PATH_NOT_ALLOWED use ask_user to request permission.
 - Before writing new apps/features: present a plan in chat, wait for approval, then implement one file per turn.
 - Never call file-writing or editing tools (like write_file, patch_file_blocks, or patch_file) unless the user explicitly requests to create, save, edit, or write to a file (e.g. specifying a filename, path, or explicitly asking to save/modify/create a file). For all other requests, explanations, and code examples, output them directly in the chat response text without calling any tools.
-- For mcp_tool: use the exact server ID and tool name as listed in [MCP Tools]. Pass arguments as a JSON object inside the tag.`;
+- For mcp_tool: use the exact server ID and tool name as listed in [MCP Tools]. Pass arguments as a JSON object inside the tag.
+- Use web_search to find relevant URLs and brief snippets on a topic. Use fetch_webpage to load the full text/markdown content of a specific URL you want to read. Do not attempt to read full webpage content from web_search results.
+- Always output the closing tag for all tools (e.g., </web_search>, </fetch_webpage>, or </read_file>). Never stop generating mid-tag.
+- Write raw values inside XML tags. For example, for web_search, write the raw query (e.g., <web_search>latest openai news</web_search>). Do NOT prefix the value with "query:" or any other labels.`;
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -420,6 +447,53 @@ function detectProjectType(workspaceRoot: string): string | null {
   if (fs.existsSync(path.join(workspaceRoot, 'CMakeLists.txt'))) return 'C/C++';
   if (fs.existsSync(path.join(workspaceRoot, 'composer.json'))) return 'PHP';
   return null;
+}
+
+function detectTestCommand(workspaceRoot: string): string {
+  if (fs.existsSync(path.join(workspaceRoot, 'Cargo.toml'))) {
+    return 'cargo test';
+  }
+  if (fs.existsSync(path.join(workspaceRoot, 'go.mod'))) {
+    return 'go test ./...';
+  }
+  if (fs.existsSync(path.join(workspaceRoot, 'package.json'))) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(workspaceRoot, 'package.json'), 'utf-8'));
+      if (pkg.scripts?.test) {
+        if (fs.existsSync(path.join(workspaceRoot, 'bun.lockb')) || fs.existsSync(path.join(workspaceRoot, 'bun.lock'))) {
+          return 'bun test';
+        }
+        if (fs.existsSync(path.join(workspaceRoot, 'yarn.lock'))) {
+          return 'yarn test';
+        }
+        if (fs.existsSync(path.join(workspaceRoot, 'pnpm-lock.yaml'))) {
+          return 'pnpm test';
+        }
+        return 'npm test';
+      }
+    } catch {}
+    return 'npm test';
+  }
+  if (fs.existsSync(path.join(workspaceRoot, 'pyproject.toml')) || 
+      fs.existsSync(path.join(workspaceRoot, 'requirements.txt')) ||
+      fs.existsSync(path.join(workspaceRoot, 'setup.py'))) {
+    return 'pytest';
+  }
+  return 'npm test'; // Default fallback
+}
+
+function sendDesktopNotification(title: string, message: string) {
+  try {
+    const { exec } = require('child_process');
+    const cleanTitle = title.replace(/['"]/g, '');
+    const cleanMessage = message.replace(/['"]/g, '');
+    
+    if (process.platform === 'darwin') {
+      exec(`osascript -e 'display notification "${cleanMessage}" with title "${cleanTitle}"'`);
+    } else if (process.platform === 'linux') {
+      exec(`notify-send "${cleanTitle}" "${cleanMessage}"`);
+    }
+  } catch {}
 }
 
 interface Unit01Config {
@@ -590,7 +664,10 @@ async function main() {
 
   const models = await ollama.listModels();
   if (models.length === 0) {
-    console.error('No local Ollama models detected. Ensure Ollama is running.');
+    console.error('\n❌ Error: No local Ollama models detected.\n');
+    console.error('To get started:');
+    console.error('  1. Ensure the Ollama service is running on your machine.');
+    console.error('  2. Download a coding model by running: ollama pull qwen2.5-coder\n');
     process.exit(1);
   }
 
@@ -665,16 +742,16 @@ async function main() {
   const indexer = new DirectiveIndexer(workspaceRoot);
   await indexer.initialize({ silent: true });
 
-  const memoryStore = {
-    generateMemoryContextBlock: (...args: any[]) => '',
-    logDecision: (...args: any[]) => '',
-    upsertConvention: (...args: any[]) => {},
-    autoCapture: (...args: any[]) => {}
-  };
+  const memoryStore = new ProjectMemoryStore(indexer.db);
+
+  try {
+    const { indexMissingEmbeddings } = await import('../../src/pro/search/index.js');
+    await indexMissingEmbeddings(indexer.db, true);
+  } catch (e) {}
 
   // Boot MCP servers silently in the background
   try {
-    const { McpClientManager } = await import('../core/mcp/client.js');
+    const { McpClientManager } = await import('../../src/core/mcp/client.js');
     McpClientManager.getInstance().initialize(true).catch(() => {});
   } catch (e) {}
 
@@ -758,13 +835,15 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
     ];
 
     try {
-      const chatResult = await ollama.chatStream(
-        activeModel,
-        summarisationPayload,
-        userContextLimit > 0 ? userContextLimit : modelContextWindow,
-        () => {},
-        new AbortController().signal
-      );
+        activeAbortController = new AbortController();
+        const chatResult = await ollama.chatStream(
+          activeModel,
+          summarisationPayload,
+          userContextLimit > 0 ? userContextLimit : modelContextWindow,
+          () => {},
+          activeAbortController.signal
+        );
+        activeAbortController = null;
 
       const contentText = chatResult.content;
 
@@ -939,36 +1018,7 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
         return;
       }
 
-      if (command === '/connect') {
-        const headerLine = chalk.hex('#C084FC')('◈ unit01  ·  connect');
-        const divider = themeBorder('────────────────────────────────────────');
 
-        const integrations = [
-          { name: 'github',   desc: 'push commits, open PRs, create issues' },
-          { name: 'slack',    desc: 'post messages to channels' },
-          { name: 'discord',  desc: 'send messages to a Discord server' },
-          { name: 'notion',   desc: 'create and update Notion pages' },
-          { name: 'telegram', desc: 'send messages via Telegram bot' },
-        ];
-
-        const out = [
-          '',
-          `  ${divider}`,
-          `  ${headerLine}`,
-          `  ${divider}`,
-          ...integrations.map(int => {
-            const nameColored = chalk.hex('#C084FC')(int.name.padEnd(12));
-            const descColored = chalk.hex('#64748B')(int.desc);
-            return `  ${nameColored}${descColored}`;
-          }),
-          '',
-          `  ${chalk.hex('#64748B')('Use /connect <name> to configure an integration')}`,
-          ''
-        ].join('\n');
-
-        ui.addTextOutput(out);
-        return;
-      }
 
       if (command === '/overkill') {
         const activeChanges = indexer.getRecentChanges();
@@ -991,6 +1041,7 @@ ${activeChanges}`;
 
         ui.startStreaming();
         try {
+          activeAbortController = new AbortController();
           const chatResult = await ollama.chatStream(
             activeModel,
             payload,
@@ -998,8 +1049,9 @@ ${activeChanges}`;
             (chunk) => {
               ui.onStreamChunk(chunk);
             },
-            new AbortController().signal
+            activeAbortController.signal
           );
+          activeAbortController = null;
           ui.endStreaming();
         } catch (err: any) {
           ui.endStreaming();
@@ -1131,6 +1183,7 @@ ${activeChanges}`;
         const divider = themeBorder('────────────────────────────────────────');
 
         const helpItems = [
+          { cmd: '/audit',       desc: 'view recent activity audit logs' },
           { cmd: '/autopilot',   desc: 'toggle autopilot mode (plan-code-test-heal loop)' },
           { cmd: '/changes',     desc: 'show recent file changes in the session' },
           { cmd: '/clear',       desc: 'clear conversation history' },
@@ -1146,7 +1199,8 @@ ${activeChanges}`;
           { cmd: '/personality', desc: 'switch assistant personality / tone' },
           { cmd: '/preview',     desc: 'preview last file changes (diff format)' },
           { cmd: '/reindex',     desc: 're-scan workspace and rebuild file index' },
-          { cmd: '/search',      desc: 'search the codebase' },
+          { cmd: '/reset-password', desc: 'reset the master password of the credentials vault' },
+          { cmd: '/search',      desc: 'search codebase  |  /search <provider> (web search)  |  /search limit <N> (result limit)' },
           { cmd: '/sessions',    desc: 'browse and manage saved sessions' },
           { cmd: '/status',      desc: 'show system status info' },
           { cmd: '/thinking',    desc: 'toggle model reasoning blocks' },
@@ -1160,7 +1214,7 @@ ${activeChanges}`;
           `  ${headerLine}`,
           `  ${divider}`,
           ...helpItems.map(item => {
-            const cmdColored = chalk.hex('#C084FC')(item.cmd.padEnd(14));
+            const cmdColored = chalk.hex('#C084FC')(item.cmd.padEnd(16));
             const descColored = chalk.hex('#64748B')(item.desc);
             return `  ${cmdColored}${descColored}`;
           }),
@@ -1807,13 +1861,26 @@ ${activeChanges}`;
       }
 
       if (command === '/undo') {
-        const dbBackup = indexer.db.db.prepare('SELECT original_path FROM shadow_backups LIMIT 1').get() as { original_path: string } | undefined;
+        const dbBackup = indexer.db.db.prepare(
+          'SELECT original_path, path_hash FROM shadow_backups ORDER BY version DESC LIMIT 1'
+        ).get() as { original_path: string; path_hash: string } | undefined;
         if (dbBackup) {
           const restoredPath = dbBackup.original_path;
           const success = indexer.undoWrite(restoredPath);
           if (success) {
             sandbox.clearLoopHistory();
-            ui.printSystemMessage('info', `Reverted changes for: ${path.basename(restoredPath)}`);
+            // Re-index the restored file
+            try {
+              if (fs.existsSync(restoredPath)) {
+                const stat = fs.statSync(restoredPath);
+                indexer.processFileOnStartup(restoredPath, stat);
+              }
+            } catch (_) {}
+            const remaining = indexer.db.getBackupDepth(
+              (await import('../../src/core/database/backup.js')).getPathHash(restoredPath)
+            );
+            const moreMsg = remaining > 0 ? `  (${remaining} more undo step${remaining > 1 ? 's' : ''} available)` : '';
+            ui.printSystemMessage('info', `Reverted: ${path.basename(restoredPath)}${moreMsg}`);
           } else {
             ui.printSystemMessage('error', `Failed to restore backup for ${restoredPath}`);
           }
@@ -1842,35 +1909,101 @@ ${activeChanges}`;
       }
 
       if (command === '/search') {
-        const runSearch = (queryStr: string) => {
-          const results = indexer.search(queryStr);
-          let out = `\nFound ${results.length} matches:\n`;
-          results.slice(0, 5).forEach(r => {
-            out += `  - ${r.relpath} (line ${r.start_line}-${r.end_line})\n`;
-          });
-          ui.addTextOutput(out);
-        };
+        const PROVIDERS = ['tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
 
-        if (!arg) {
-          const query = await ui.interactiveInput('Enter search query:');
-          const searchArg = query.trim();
-          if (!searchArg) {
-            ui.printSystemMessage('error', 'Search cancelled: empty query.');
+        const argTrimmed = arg ? arg.trim().toLowerCase() : '';
+
+        // 1. /search limit <number> — change max retrieved sources
+        if (argTrimmed.startsWith('limit ')) {
+          const limitVal = parseInt(argTrimmed.substring(6).trim(), 10);
+          if (isNaN(limitVal) || limitVal < 1 || limitVal > 20) {
+            ui.printSystemMessage('error', 'Search limit must be a valid integer between 1 and 20.');
           } else {
-            runSearch(searchArg);
+            try {
+              const { setSearchLimit } = await import('../../src/pro/connect/integrations/search.js');
+              setSearchLimit(limitVal);
+              ui.printSystemMessage('info', `Search result count limit set to: ${limitVal}`);
+            } catch (e: any) {
+              ui.printSystemMessage('error', `Failed to set search limit: ${e.message}`);
+            }
           }
-        } else {
-          runSearch(arg);
+          return;
         }
+
+        // 2. /search <provider> — switch web search provider
+        if (arg && PROVIDERS.includes(arg.trim().toLowerCase())) {
+          const provider = arg.trim().toLowerCase();
+          try {
+            const { setSearchProvider } = await import('../../src/pro/connect/integrations/search.js');
+            setSearchProvider(provider);
+            const label = provider === 'auto' ? 'Auto (use first connected key)' : provider.charAt(0).toUpperCase() + provider.slice(1);
+            ui.printSystemMessage('info', `Web search provider set to: ${label}`);
+          } catch (e: any) {
+            ui.printSystemMessage('error', `Failed to set provider: ${e.message}`);
+          }
+          return;
+        }
+
+        // 3. /search with no args — show current provider, current limit, + options
+        if (!arg) {
+          const { getSearchProvider, getSearchLimit } = await import('../../src/pro/connect/integrations/search.js');
+          const { isServiceConnected } = await import('../../src/core/tier.js');
+          const current = getSearchProvider();
+          const currentLimit = getSearchLimit();
+          const connected = PROVIDERS.filter(p => p !== 'auto' && p !== 'duckduckgo' && isServiceConnected(p));
+          const connectedStr = connected.length > 0 ? connected.join(', ') : 'none';
+
+          const options = [
+            ...PROVIDERS.map(p => {
+              const isActive = p === current;
+              const isConn = p !== 'auto' && p !== 'duckduckgo' && connected.includes(p);
+              const tag = isActive ? chalk.hex('#10B981')(' ✓ active') : '';
+              const connTag = isConn ? chalk.hex('#38BDF8')(' (connected)') : '';
+              return `${p}${tag}${connTag}`;
+            }),
+            'Search codebase instead'
+          ];
+
+          ui.addTextOutput(`\n  Current web search provider: ${chalk.hex('#C084FC')(current)}\n  Current search source limit: ${chalk.hex('#C084FC')(currentLimit)}\n  Connected keys: ${connectedStr}\n  Tip: /search <provider> to switch, /search limit <N> to set count limit, /search <query> to search codebase\n`);
+          return;
+        }
+
+        // 4. /search <query> — codebase search (original behavior)
+        const results = indexer.search(arg);
+        let out = `\nFound ${results.length} matches:\n`;
+        results.slice(0, 5).forEach(r => {
+          out += `  - ${r.relpath} (line ${r.start_line}-${r.end_line})\n`;
+        });
+        ui.addTextOutput(out);
         return;
       }
 
 
+      if (command === '/audit') {
+        const store = new AuditLogStore(indexer.db);
+        const limitStr = arg ? arg.trim() : '15';
+        const limit = parseInt(limitStr, 10) || 15;
+        const logs = store.getRecentLogs(limit);
+        if (logs.length === 0) {
+          ui.printSystemMessage('info', 'No audit logs recorded yet.');
+          return;
+        }
+        let out = `\nRecent Activity Audit Logs:\n`;
+        logs.forEach(l => {
+          const time = new Date(l.timestamp).toLocaleTimeString();
+          const statusText = l.status === 'completed' || l.status === 'approved' 
+            ? chalk.green(l.status) 
+            : l.status === 'failed' ? chalk.red(l.status) : chalk.yellow(l.status);
+          out += `  [${time}] ${chalk.cyan(l.service)} · ${l.operation} -> ${l.target} (${statusText})\n`;
+        });
+        ui.addTextOutput(out);
+        return;
+      }
 
       // ── /mcp ─────────────────────────────────────────────────────────────────
       if (command === '/mcp') {
-        const { McpClientManager } = await import('../core/mcp/client.js');
-        const { loadMcpConfig, saveMcpServer, removeMcpServer } = await import('../core/mcp/config.js');
+        const { McpClientManager } = await import('../../src/core/mcp/client.js');
+        const { loadMcpConfig, saveMcpServer, removeMcpServer } = await import('../../src/core/mcp/config.js');
         const mcpManager = McpClientManager.getInstance();
         const subCmd = arg?.trim().split(/\s+/)[0] || '';
         const subArgs = arg?.trim().split(/\s+/).slice(1) || [];
@@ -1966,6 +2099,214 @@ ${toolLines.join('\n')}\n`);
         return;
       }
 
+      if (command === '/connect') {
+        let service = '';
+        let token = '';
+
+        if (arg) {
+          const parts = arg.trim().split(/\s+/);
+          if (parts.length === 2) {
+            [service, token] = parts;
+          } else {
+            ui.printSystemMessage('error', 'Usage: /connect <service> <token> or just /connect to open the interactive menu.');
+            return;
+          }
+        } else {
+          const { isPro, isServiceConnected } = await import('../../src/core/tier.js');
+
+          const serviceOptions = [
+            { id: 'tavily', label: 'Tavily (Web Search)' },
+            { id: 'brave',  label: 'Brave Web Search' },
+            { id: 'exa',    label: 'Exa (Web Search)' },
+            { id: 'jina',   label: 'Jina (Web Search)' },
+            { id: 'serper', label: 'Serper (Web Search)' },
+            { id: 'github', label: 'GitHub API Integration' },
+            { id: 'slack',  label: 'Slack Integration' },
+            { id: 'linear', label: 'Linear (Issue Tracking)' },
+            { id: 'sentry', label: 'Sentry (Error Tracking)' },
+            { id: 'notion', label: 'Notion Database Integration' }
+          ];
+
+          // Build menu options: show (Connected) for active ones
+          const options = serviceOptions.map(opt => {
+            const connected = isServiceConnected(opt.id);
+            const statusSuffix = connected ? chalk.hex('#10B981')(' (Connected)') : '';
+            return `${opt.label}${statusSuffix}`;
+          });
+          options.push('Disconnect Service');
+
+          const choiceIdx = await ui.interactiveSelect('Select Service to Connect:', options);
+          if (choiceIdx === -1) return;
+
+          // Handle Disconnect Service option (last option in the list)
+          if (choiceIdx === options.length - 1) {
+            const activeServices = serviceOptions.filter(opt => isServiceConnected(opt.id));
+
+            if (activeServices.length === 0) {
+              ui.printSystemMessage('info', 'No active services to disconnect.');
+              return;
+            }
+
+            const disconnectLabels = activeServices.map(opt => opt.label);
+            const selectDisconnectIdx = await ui.interactiveSelect('Select Service to Disconnect:', disconnectLabels);
+            if (selectDisconnectIdx === -1) return;
+
+            const targetService = activeServices[selectDisconnectIdx].id;
+            try {
+              if (!isPro()) {
+                const { deletePlaintextToken } = await import('../../src/core/tier.js');
+                deletePlaintextToken(targetService);
+                ui.printSystemMessage('info', `Disconnected credentials for service: ${targetService}`);
+                return;
+              }
+              const { disconnectService } = await import('../../src/pro/connect/index.js');
+              disconnectService(targetService);
+              ui.printSystemMessage('info', `Disconnected credentials for service: ${targetService}`);
+            } catch (e: any) {
+              ui.printSystemMessage('error', `Failed to disconnect service: ${e.message}`);
+            }
+            return;
+          }
+
+          // Handle normal service connection selection
+          const selectedOpt = serviceOptions[choiceIdx];
+          if (isServiceConnected(selectedOpt.id)) {
+            ui.printSystemMessage('error', `Service "${selectedOpt.id}" is already connected. Please disconnect it first before entering a new token.`);
+            return;
+          }
+
+          service = selectedOpt.id;
+          const inputPrompt = `Enter API Token/Key for ${selectedOpt.label}:`;
+          token = await ui.interactiveInput(inputPrompt);
+          if (!token || token.trim().length === 0) {
+            ui.printSystemMessage('error', 'API Token/Key cannot be empty.');
+            return;
+          }
+          token = token.trim();
+        }
+
+        ui.showToolProgress(`Connecting service ${service}...`);
+        try {
+          const { isPro, savePlaintextToken } = await import('../../src/core/tier.js');
+          const { validateServiceToken } = await import('../../src/pro/connect/index.js');
+
+          if (!isPro()) {
+            // Free Tier: Plaintext config flow
+            const isValid = await validateServiceToken(service, token);
+            ui.hideToolProgress();
+            if (!isValid) {
+              ui.printSystemMessage('error', `Failed to validate token for ${service}. Please check your credentials.`);
+              return;
+            }
+            savePlaintextToken(service, token);
+            ui.printSystemMessage('info', `Successfully connected service: ${service}`);
+            ui.addTextOutput(`\n  ${chalk.hex('#F59E0B')('⚠️ Warning:')} ${chalk.hex('#6B7280')('Stored credentials in plaintext at ~/.unit01/config.json.')}\n  ${chalk.hex('#6B7280')('Upgrade to Pro to use the secure OS Keychain / encrypted Vault.')}\n`);
+            return;
+          }
+
+          // Pro Tier: Secure Keychain/Vault flow
+          const isValid = await validateServiceToken(service, token);
+          if (!isValid) {
+            ui.hideToolProgress();
+            ui.printSystemMessage('error', `Failed to validate token for ${service}. Please check your credentials.`);
+            return;
+          }
+
+          const { connectService, isSecretToolAvailable } = await import('../../src/pro/connect/index.js');
+          
+          if (process.platform !== 'darwin' && !isSecretToolAvailable()) {
+            const { vaultExists, unlockWithPassword, initializeVault } = await import('../../src/pro/connect/vault.js');
+            if (vaultExists()) {
+              let unlocked = false;
+              while (!unlocked) {
+                const password = await ui.interactiveInput('Enter Vault Master Password to unlock credentials store:');
+                if (!password) {
+                  ui.printSystemMessage('error', 'Password required to unlock credentials vault.');
+                  ui.hideToolProgress();
+                  return;
+                }
+                unlocked = unlockWithPassword(password);
+                if (!unlocked) {
+                  ui.printSystemMessage('error', 'Incorrect password. Try again.');
+                }
+              }
+            } else {
+              const password = await ui.interactiveInput('Create a new Vault Master Password to encrypt API credentials:');
+              if (!password) {
+                ui.printSystemMessage('error', 'Password required to initialize credentials vault.');
+                ui.hideToolProgress();
+                return;
+              }
+              const confirmPassword = await ui.interactiveInput('Confirm Vault Master Password:');
+              if (password !== confirmPassword) {
+                ui.printSystemMessage('error', 'Passwords do not match. Vault initialization aborted.');
+                ui.hideToolProgress();
+                return;
+              }
+              const recoveryKey = initializeVault(password);
+              ui.printSystemMessage('info', `Vault initialized successfully!\nYour Recovery Key (keep this safe!):\n--> ${recoveryKey}`);
+            }
+          }
+          
+          await connectService(service, token);
+          ui.hideToolProgress();
+          ui.printSystemMessage('info', `Successfully connected service: ${service}`);
+        } catch (e: any) {
+          ui.hideToolProgress();
+          ui.printSystemMessage('error', `Failed to connect service: ${e.message}`);
+        }
+        return;
+      }
+
+      if (command === '/reset-password') {
+        if (process.platform === 'darwin') {
+          ui.printSystemMessage('info', 'Password vault not used on macOS (using native Keychain).');
+          return;
+        }
+        const { isSecretToolAvailable } = await import('../../src/pro/connect/index.js');
+        if (isSecretToolAvailable()) {
+          ui.printSystemMessage('info', 'Password vault not used (using Linux Secret Service Keyring).');
+          return;
+        }
+        
+        const { vaultExists, unlockWithRecoveryKey, resetVaultPassword } = await import('../../src/pro/connect/vault.js');
+        if (!vaultExists()) {
+          ui.printSystemMessage('error', 'Vault does not exist. Use /connect to initialize it first.');
+          return;
+        }
+
+        const recoveryKey = await ui.interactiveInput('Enter Vault Master Recovery Key:');
+        if (!recoveryKey) {
+          ui.printSystemMessage('error', 'Recovery key required.');
+          return;
+        }
+
+        const unlocked = unlockWithRecoveryKey(recoveryKey.trim());
+        if (!unlocked) {
+          ui.printSystemMessage('error', 'Invalid Recovery Key.');
+          return;
+        }
+
+        const newPassword = await ui.interactiveInput('Enter new Master Password:');
+        if (!newPassword) {
+          ui.printSystemMessage('error', 'New password required.');
+          return;
+        }
+        const confirmPassword = await ui.interactiveInput('Confirm new Master Password:');
+        if (newPassword !== confirmPassword) {
+          ui.printSystemMessage('error', 'Passwords do not match.');
+          return;
+        }
+
+        const success = resetVaultPassword(recoveryKey.trim(), newPassword);
+        if (success) {
+          ui.printSystemMessage('info', 'Vault master password reset successfully.');
+        } else {
+          ui.printSystemMessage('error', 'Failed to reset vault password.');
+        }
+        return;
+      }
+
       ui.printSystemMessage('error', `Unknown command: ${command}`);
       return;
     }
@@ -2034,7 +2375,7 @@ ${toolLines.join('\n')}\n`);
       // Inject live MCP tools so model knows what's available
       let mcpToolsBlock = '';
       try {
-        const { McpClientManager } = await import('../core/mcp/client.js');
+        const { McpClientManager } = await import('../../src/core/mcp/client.js');
         const mcpTools = McpClientManager.getInstance().getAllTools();
         if (mcpTools.length > 0) {
           const lines = mcpTools.map(t =>
@@ -2142,7 +2483,7 @@ ${toolLines.join('\n')}\n`);
               if (writtenPath && ['write_file', 'patch_file', 'patch_file_blocks', 'delete_file', 'make_dir', 'copy_file'].includes(tc.function?.name)) {
                 evictReadFingerprintsForPath(writtenPath);
               }
-              toolResult = await handleToolCalls(xmlEquivalent, sandbox, indexer, ui, state);
+              toolResult = await handleToolCalls(xmlEquivalent, sandbox, indexer, ui, state, fileReadCache);
             }
           }
         } else {
@@ -2185,7 +2526,7 @@ ${toolLines.join('\n')}\n`);
               }
               if (writtenPath) evictReadFingerprintsForPath(writtenPath);
             }
-            toolResult = await handleToolCalls(cleanedResponse, sandbox, indexer, ui, state);
+            toolResult = await handleToolCalls(cleanedResponse, sandbox, indexer, ui, state, fileReadCache);
           }
         }
 
@@ -2201,7 +2542,7 @@ ${toolLines.join('\n')}\n`);
                             ));
         
         if (autopilotEnabled && toolResult.toolRun && hasEditedFiles) {
-          const testCommand = config.test_command || 'npm test';
+          const testCommand = config.test_command || detectTestCommand(workspaceRoot);
           ui.printSystemMessage('info', `🤖 [Autopilot] Verifying edits with test command: "${testCommand}"...`);
           try {
             const { exec } = await import('child_process');
@@ -2224,9 +2565,10 @@ ${toolLines.join('\n')}\n`);
 
             if (passed) {
               ui.printSystemMessage('info', '🤖 [Autopilot] Verification passed successfully!');
+              sendDesktopNotification("Autopilot Success 🤖", `Verification passed for command: "${testCommand}"`);
             } else {
               ui.printSystemMessage('error', '🤖 [Autopilot] Verification failed. Self-healing trace generated.');
-              ui.addTextOutput(`\n  ${chalk.hex('#F59E0B')('💡 Pro Tip:')} ${chalk.hex('#6B7280')('Upgrade to Pro to enable autonomous multi-iteration self-healing.')}\n`);
+              sendDesktopNotification("Autopilot Verification Failed ⚠️", `Self-healing in progress for: "${testCommand}"`);
               toolResult.nextPrompt = `<tool_output>\nAutopilot verification command "${testCommand}" failed with output:\n${output.substring(0, 3000)}\n</tool_output>`;
               toolResult.toolRun = true;
             }

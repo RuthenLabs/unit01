@@ -397,12 +397,14 @@ TOOLS (use exactly as shown — real paths, not placeholders):
 <github_create_pr owner="owner" repo="repo" title="title" head="head" base="base">body</github_create_pr>
 <slack_get_history channel="C123" limit="10" /> (channel is optional, defaults to last-used channel)
 <slack_post_message channel="C123">text</slack_post_message> (channel is optional, defaults to last-used channel)
-<discord_get_history channel="C123" limit="10" /> (channel is optional, defaults to last-used channel)
-<discord_post_message channel="C123">text</discord_post_message> (channel is optional, defaults to last-used channel)
+<linear_get_teams />
+<linear_get_issues team_id="TEAM_ID" limit="10" /> (team_id is optional, defaults to last-used team)
+<linear_create_issue team_id="TEAM_ID" title="Bug: login crash" priority="1">description</linear_create_issue> (team_id optional)
+<sentry_get_orgs />
+<sentry_get_issues org_slug="my-org" project_slug="my-project" limit="10" /> (org_slug optional, defaults to last-used org)
+<sentry_get_issue issue_id="12345678" />
 <notion_get_page page_id="id" />
 <notion_append_blocks block_id="id">JSON_array_children</notion_append_blocks>
-<telegram_get_updates limit="10" />
-<telegram_post_message chat_id="id">text</telegram_post_message>
 
 RULES:
 - One tool per response. Output the tag, then stop. Never explain before calling a tool.
@@ -662,7 +664,10 @@ async function main() {
 
   const models = await ollama.listModels();
   if (models.length === 0) {
-    console.error('No local Ollama models detected. Ensure Ollama is running.');
+    console.error('\n❌ Error: No local Ollama models detected.\n');
+    console.error('To get started:');
+    console.error('  1. Ensure the Ollama service is running on your machine.');
+    console.error('  2. Download a coding model by running: ollama pull qwen2.5-coder\n');
     process.exit(1);
   }
 
@@ -1195,7 +1200,7 @@ ${activeChanges}`;
           { cmd: '/preview',     desc: 'preview last file changes (diff format)' },
           { cmd: '/reindex',     desc: 're-scan workspace and rebuild file index' },
           { cmd: '/reset-password', desc: 'reset the master password of the credentials vault' },
-          { cmd: '/search',      desc: 'search codebase  |  /search <provider> to set web search (tavily, brave, exa, serper, auto)' },
+          { cmd: '/search',      desc: 'search codebase  |  /search <provider> (web search)  |  /search limit <N> (result limit)' },
           { cmd: '/sessions',    desc: 'browse and manage saved sessions' },
           { cmd: '/status',      desc: 'show system status info' },
           { cmd: '/thinking',    desc: 'toggle model reasoning blocks' },
@@ -2116,7 +2121,9 @@ ${toolLines.join('\n')}\n`);
             { id: 'jina',   label: 'Jina (Web Search)' },
             { id: 'serper', label: 'Serper (Web Search)' },
             { id: 'github', label: 'GitHub API Integration' },
-            { id: 'slack',  label: 'Slack Webhook Integration' },
+            { id: 'slack',  label: 'Slack Integration' },
+            { id: 'linear', label: 'Linear (Issue Tracking)' },
+            { id: 'sentry', label: 'Sentry (Error Tracking)' },
             { id: 'notion', label: 'Notion Database Integration' }
           ];
 

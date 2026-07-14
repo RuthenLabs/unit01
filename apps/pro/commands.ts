@@ -1701,9 +1701,9 @@ export async function handleToolCalls(
   const integrations = [
     'github_get_pr', 'github_create_issue', 'github_create_pr', 'github_list_repos', 'github_get_contents', 'github_rename_repo',
     'slack_get_history', 'slack_post_message',
-    'discord_get_history', 'discord_post_message',
-    'notion_get_page', 'notion_append_blocks',
-    'telegram_get_updates', 'telegram_post_message'
+    'linear_get_teams', 'linear_get_issues', 'linear_create_issue',
+    'sentry_get_orgs', 'sentry_get_issues', 'sentry_get_issue',
+    'notion_get_page', 'notion_append_blocks'
   ];
 
   const matches = [...text.matchAll(/<([a-zA-Z0-9_]+)\b/g)];
@@ -1711,8 +1711,8 @@ export async function handleToolCalls(
   if (matchedTag) {
     const isWrite = [
       'github_create_issue', 'github_create_pr', 'github_rename_repo',
-      'slack_post_message', 'discord_post_message',
-      'notion_append_blocks', 'telegram_post_message'
+      'slack_post_message', 'linear_create_issue',
+      'notion_append_blocks'
     ].includes(matchedTag);
 
     // Helpers to extract attributes and text bodies
@@ -1824,25 +1824,73 @@ export async function handleToolCalls(
           output = `Slack message posted successfully to channel ${channel} (TS: ${res.ts || 'unknown'}).`;
           break;
         }
-        case 'discord_get_history': {
-          const channel = getAttr('discord_get_history', 'channel');
-          const limitStr = getAttr('discord_get_history', 'limit');
-          const limit = limitStr ? parseInt(limitStr) : 10;
-          const { fetchDiscordMessages } = await import('../../src/pro/connect/integrations/discord.js');
-          const history = await fetchDiscordMessages(channel, limit);
-          if (history.length === 0) {
-            output = `No messages found in Discord channel ${channel}.`;
+        case 'linear_get_teams': {
+          const { fetchLinearTeams } = await import('../../src/pro/connect/integrations/linear.js');
+          const teams = await fetchLinearTeams();
+          if (teams.length === 0) {
+            output = 'No Linear teams found in your workspace.';
           } else {
-            output = history.map((m: any) => `[${m.author?.username || 'User'}]: ${m.content}`).join('\n');
+            output = teams.map(t => `[${t.key}] ${t.name} (ID: ${t.id})`).join('\n');
           }
           break;
         }
-        case 'discord_post_message': {
-          const channel = getAttr('discord_post_message', 'channel');
-          const body = getBody('discord_post_message');
-          const { postDiscordMessage } = await import('../../src/pro/connect/integrations/discord.js');
-          const res = await postDiscordMessage(channel, body);
-          output = `Discord message posted successfully to channel ${channel} (ID: ${res.id || 'unknown'}).`;
+        case 'linear_get_issues': {
+          const teamId = getAttr('linear_get_issues', 'team_id');
+          const limitStr = getAttr('linear_get_issues', 'limit');
+          const limit = limitStr ? parseInt(limitStr) : 10;
+          const { fetchLinearIssues } = await import('../../src/pro/connect/integrations/linear.js');
+          const issues = await fetchLinearIssues(teamId || undefined, limit);
+          if (issues.length === 0) {
+            output = 'No issues found.';
+          } else {
+            output = issues.map(i =>
+              `[${i.identifier}] ${i.title} — ${i.state?.name || 'Unknown'} | Priority: ${i.priority} | Assignee: ${i.assignee?.name || 'Unassigned'}\n  ${i.url}`
+            ).join('\n\n');
+          }
+          break;
+        }
+        case 'linear_create_issue': {
+          const teamId = getAttr('linear_create_issue', 'team_id');
+          const title = getAttr('linear_create_issue', 'title');
+          const priorityStr = getAttr('linear_create_issue', 'priority');
+          const priority = priorityStr ? parseInt(priorityStr) : 0;
+          const description = getBody('linear_create_issue');
+          const { createLinearIssue } = await import('../../src/pro/connect/integrations/linear.js');
+          const issue = await createLinearIssue(title, description, teamId || undefined, priority);
+          output = `Linear issue created successfully!\n  ID: ${issue.identifier}\n  Title: ${issue.title}\n  URL: ${issue.url}`;
+          break;
+        }
+        case 'sentry_get_orgs': {
+          const { fetchSentryOrganizations } = await import('../../src/pro/connect/integrations/sentry.js');
+          const orgs = await fetchSentryOrganizations();
+          if (orgs.length === 0) {
+            output = 'No Sentry organizations found.';
+          } else {
+            output = orgs.map(o => `[${o.slug}] ${o.name}`).join('\n');
+          }
+          break;
+        }
+        case 'sentry_get_issues': {
+          const orgSlug = getAttr('sentry_get_issues', 'org_slug');
+          const projectSlug = getAttr('sentry_get_issues', 'project_slug');
+          const limitStr = getAttr('sentry_get_issues', 'limit');
+          const limit = limitStr ? parseInt(limitStr) : 10;
+          const { fetchSentryIssues } = await import('../../src/pro/connect/integrations/sentry.js');
+          const issues = await fetchSentryIssues(orgSlug || undefined, projectSlug || undefined, limit);
+          if (issues.length === 0) {
+            output = 'No unresolved Sentry issues found.';
+          } else {
+            output = issues.map(i =>
+              `[${i.level.toUpperCase()}] ${i.title}\n  Culprit: ${i.culprit}\n  Occurrences: ${i.count} | Users affected: ${i.userCount}\n  Last seen: ${i.lastSeen}\n  URL: ${i.url}`
+            ).join('\n\n');
+          }
+          break;
+        }
+        case 'sentry_get_issue': {
+          const issueId = getAttr('sentry_get_issue', 'issue_id');
+          const { fetchSentryIssueDetails } = await import('../../src/pro/connect/integrations/sentry.js');
+          const issue = await fetchSentryIssueDetails(issueId);
+          output = `[${issue.level.toUpperCase()}] ${issue.title}\nCulprit: ${issue.culprit}\nOccurrences: ${issue.count} | Users: ${issue.userCount}\nFirst seen: ${issue.firstSeen} | Last seen: ${issue.lastSeen}\nURL: ${issue.url}\n\nStack Trace (last 10 frames):\n${issue.stackTrace}`;
           break;
         }
         case 'notion_get_page': {
@@ -1858,22 +1906,6 @@ export async function handleToolCalls(
           const { appendNotionBlocks } = await import('../../src/pro/connect/integrations/notion.js');
           const children = JSON.parse(body);
           const res = await appendNotionBlocks(blockId, children);
-          output = JSON.stringify(res, null, 2);
-          break;
-        }
-        case 'telegram_get_updates': {
-          const limitStr = getAttr('telegram_get_updates', 'limit');
-          const limit = limitStr ? parseInt(limitStr) : 10;
-          const { fetchTelegramUpdates } = await import('../../src/pro/connect/integrations/telegram.js');
-          const updates = await fetchTelegramUpdates(limit);
-          output = JSON.stringify(updates, null, 2);
-          break;
-        }
-        case 'telegram_post_message': {
-          const chatId = getAttr('telegram_post_message', 'chat_id');
-          const body = getBody('telegram_post_message');
-          const { postTelegramMessage } = await import('../../src/pro/connect/integrations/telegram.js');
-          const res = await postTelegramMessage(chatId, body);
           output = JSON.stringify(res, null, 2);
           break;
         }
