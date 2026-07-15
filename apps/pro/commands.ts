@@ -20,6 +20,17 @@ import {
 } from '../../src/cli/views/theme.js';
 import { UiAdapter } from '../../src/cli/types.js';
 
+function resolvePath(workspaceRoot: string, pathVal: string): string {
+  let resolved = pathVal;
+  if (pathVal.startsWith('~/')) {
+    resolved = path.join(os.homedir(), pathVal.slice(2));
+  } else if (pathVal === '~') {
+    resolved = os.homedir();
+  } else {
+    resolved = path.resolve(workspaceRoot, pathVal);
+  }
+  return path.resolve(resolved);
+}
 
 import {
   parseRunCommand,
@@ -142,7 +153,7 @@ export async function handleToolCalls(
 
   const deletePath = parseDeleteFile(text);
   if (deletePath !== null) {
-    const absPath = path.resolve(sandbox['workspaceRoot'], deletePath);
+    const absPath = resolvePath(sandbox['workspaceRoot'], deletePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'delete_file', filePath: deletePath });
 
     if (!sandbox.isPathWriteAllowed(absPath)) {
@@ -163,19 +174,13 @@ export async function handleToolCalls(
     if (!fs.existsSync(absPath)) {
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\nError: File not found at ${deletePath}\n</tool_output>`,
-        consoleOutput: `\n[Delete failed: File not found: ${deletePath}]`
+        nextPrompt: `<tool_output>\nError: Target not found at ${deletePath}\n</tool_output>`,
+        consoleOutput: `\n[Delete failed: Target not found: ${deletePath}]`
       };
     }
 
     const stat = fs.statSync(absPath);
-    if (stat.isDirectory()) {
-      return {
-        toolRun: true,
-        nextPrompt: `<tool_output>\nError: delete_file only supports deleting files, not directories. Use run_command with rm -rf to delete directories.\n</tool_output>`,
-        consoleOutput: `\n[Delete blocked: target is a directory: ${deletePath}]`
-      };
-    }
+    const isDir = stat.isDirectory();
 
     let userConfirmed = false;
     const choice = await ui.interactiveConfirmWrite(deletePath, 0, 'delete' as any);
@@ -194,16 +199,41 @@ export async function handleToolCalls(
 
     ui.showToolProgress(`${themeAccent('delete')} ${deletePath}...`);
     try {
-      // 1. Shadow backup BEFORE deleting so it is undoable!
-      indexer.backupBeforeWrite(absPath);
+      if (isDir) {
+        const getAllFilesRecursive = (dir: string): string[] => {
+          let files: string[] = [];
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              files = files.concat(getAllFilesRecursive(fullPath));
+            } else {
+              files.push(fullPath);
+            }
+          }
+          return files;
+        };
 
-      // 2. Unlink the file
-      fs.unlinkSync(absPath);
+        const files = getAllFilesRecursive(absPath);
+        for (const file of files) {
+          indexer.backupBeforeWrite(file);
+        }
+        fs.rmSync(absPath, { recursive: true, force: true });
+        for (const file of files) {
+          indexer.db.removeFile(file);
+        }
+      } else {
+        // 1. Shadow backup BEFORE deleting so it is undoable!
+        indexer.backupBeforeWrite(absPath);
+
+        // 2. Unlink the file
+        fs.unlinkSync(absPath);
+        
+        // 3. Remove file from indexer DB
+        indexer.db.removeFile(absPath);
+      }
 
       sandbox.clearLoopHistory();
-      
-      // 3. Remove file from indexer DB
-      indexer.db.removeFile(absPath);
       indexer.currentRepoMap = buildRepoMap(indexer.db);
 
       ui.hideToolProgress();
@@ -226,8 +256,8 @@ export async function handleToolCalls(
 
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\nFile successfully deleted: ${deletePath}\n</tool_output>`,
-        consoleOutput: `\n[File deleted: ${deletePath}]`
+        nextPrompt: `<tool_output>\n${isDir ? 'Directory' : 'File'} successfully deleted: ${deletePath}\n</tool_output>`,
+        consoleOutput: `\n[${isDir ? 'Directory' : 'File'} deleted: ${deletePath}]`
       };
     } catch (err: any) {
       ui.hideToolProgress();
@@ -242,7 +272,7 @@ export async function handleToolCalls(
 
   const makeDirPath = parseMakeDir(text);
   if (makeDirPath !== null) {
-    const absPath = path.resolve(sandbox['workspaceRoot'], makeDirPath);
+    const absPath = resolvePath(sandbox['workspaceRoot'], makeDirPath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'make_dir', filePath: makeDirPath });
 
     if (!sandbox.isPathWriteAllowed(absPath)) {
@@ -301,8 +331,8 @@ export async function handleToolCalls(
   const copyFileParams = parseCopyFile(text);
   if (copyFileParams !== null) {
     const { sourcePath, destinationPath } = copyFileParams;
-    const absSrc = path.resolve(sandbox['workspaceRoot'], sourcePath);
-    const absDest = path.resolve(sandbox['workspaceRoot'], destinationPath);
+    const absSrc = resolvePath(sandbox['workspaceRoot'], sourcePath);
+    const absDest = resolvePath(sandbox['workspaceRoot'], destinationPath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'copy_file', sourcePath, destinationPath });
 
     if (!sandbox.isPathAllowed(absSrc)) {
@@ -411,7 +441,7 @@ export async function handleToolCalls(
 
   const outlinePath = parseViewOutline(text);
   if (outlinePath !== null) {
-    const absPath = path.resolve(sandbox['workspaceRoot'], outlinePath);
+    const absPath = resolvePath(sandbox['workspaceRoot'], outlinePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'view_outline', outlinePath });
 
     if (!sandbox.isPathAllowed(absPath)) {
@@ -677,7 +707,7 @@ export async function handleToolCalls(
   if (writeResult) {
     const filePath = writeResult.filePath;
     const content = writeResult.content;
-    const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'write_file', filePath });
     
     if (!sandbox.isPathWriteAllowed(absPath)) {
@@ -799,7 +829,7 @@ export async function handleToolCalls(
   const readPath = parseReadFile(text);
   if (readPath !== null) {
     const filePath = readPath;
-    const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'read_file', filePath });
     
     if (!sandbox.isPathAllowed(absPath)) {
@@ -1006,7 +1036,7 @@ export async function handleToolCalls(
   const patchResult = parsePatchFile(text);
   if (patchResult) {
     const { filePath, search, replace } = patchResult;
-    const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'patch_file', filePath, search, replace });
 
     if (!sandbox.isPathWriteAllowed(absPath)) {
@@ -1110,7 +1140,7 @@ export async function handleToolCalls(
   const patchBlocksResult = parsePatchFileBlocks(text);
   if (patchBlocksResult) {
     const { filePath, diff } = patchBlocksResult;
-    const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'patch_file_blocks', filePath });
 
     if (!sandbox.isPathWriteAllowed(absPath)) {
@@ -1219,7 +1249,7 @@ export async function handleToolCalls(
   const listDirResult = parseListDir(text);
   if (listDirResult) {
     const { pathVal, recursive } = listDirResult;
-    const absPath = path.resolve(sandbox['workspaceRoot'], pathVal);
+    const absPath = resolvePath(sandbox['workspaceRoot'], pathVal);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'list_dir', pathVal, recursive });
 
     if (!sandbox.isPathAllowed(absPath)) {
@@ -1435,8 +1465,8 @@ export async function handleToolCalls(
   const moveResult = parseMoveFile(text);
   if (moveResult !== null) {
     const { sourcePath, destinationPath } = moveResult;
-    const absSource = path.resolve(sandbox['workspaceRoot'], sourcePath);
-    const absDest = path.resolve(sandbox['workspaceRoot'], destinationPath);
+    const absSource = resolvePath(sandbox['workspaceRoot'], sourcePath);
+    const absDest = resolvePath(sandbox['workspaceRoot'], destinationPath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'move_file', sourcePath, destinationPath });
 
     if (!sandbox.isPathWriteAllowed(absSource)) {
