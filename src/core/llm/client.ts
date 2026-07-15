@@ -108,7 +108,7 @@ export class OllamaClient {
    */
   public async chatStream(
     modelName: string,
-    messages: { role: string; content: string; tool_calls?: any[] }[],
+    messages: { role: string; content: string; images?: string[]; tool_calls?: any[] }[],
     contextLimit: number,
     onChunk: (text: string) => void,
     signal?: AbortSignal,

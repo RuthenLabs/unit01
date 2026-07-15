@@ -635,6 +635,43 @@ function compressSourceCode(filePath: string, content: string): string {
   return content;
 }
 
+function detectAndLoadImages(text: string, workspaceRoot: string, ui: UiAdapter): string[] {
+  const imageBase64s: string[] = [];
+  const imageRegex = /"([^"]+\.(?:png|jpg|jpeg|webp|gif))"|'([^']+\.(?:png|jpg|jpeg|webp|gif))'|([^\s"']+\.(?:png|jpg|jpeg|webp|gif))/gi;
+  
+  let match;
+  while ((match = imageRegex.exec(text)) !== null) {
+    const filePath = match[1] || match[2] || match[3];
+    if (!filePath) continue;
+
+    let resolvedPath = filePath;
+    if (filePath === '~') {
+      resolvedPath = os.homedir();
+    } else if (filePath.startsWith('~/')) {
+      resolvedPath = path.join(os.homedir(), filePath.slice(2));
+    }
+
+    const absPath = path.isAbsolute(resolvedPath)
+      ? resolvedPath
+      : path.resolve(workspaceRoot, resolvedPath);
+
+    if (fs.existsSync(absPath)) {
+      try {
+        const stats = fs.statSync(absPath);
+        if (stats.isFile()) {
+          const data = fs.readFileSync(absPath);
+          const base64 = data.toString('base64');
+          imageBase64s.push(base64);
+          ui.printSystemMessage('info', `📷 Loaded image: ${path.basename(absPath)}`);
+        }
+      } catch (e: any) {
+        ui.printSystemMessage('error', `Failed to read image at ${filePath}: ${e.message}`);
+      }
+    }
+  }
+  return imageBase64s;
+}
+
 async function main() {
   const workspaceRoot = process.cwd();
 
@@ -842,7 +879,7 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
         const chatResult = await ollama.chatStream(
           activeModel,
           summarisationPayload,
-          userContextLimit > 0 ? userContextLimit : modelContextWindow,
+          userContextLimit,
           () => {},
           activeAbortController.signal
         );
@@ -1048,7 +1085,7 @@ ${activeChanges}`;
           const chatResult = await ollama.chatStream(
             activeModel,
             payload,
-            userContextLimit > 0 ? userContextLimit : modelContextWindow,
+            userContextLimit,
             (chunk) => {
               ui.onStreamChunk(chunk);
             },
@@ -2427,7 +2464,12 @@ ${toolLines.join('\n')}\n`);
       return;
     }
 
-    conversationHistory.push({ role: 'user', content: trimmed });
+    const images = detectAndLoadImages(trimmed, workspaceRoot, ui);
+    const userMsg: any = { role: 'user', content: trimmed };
+    if (images.length > 0) {
+      userMsg.images = images;
+    }
+    conversationHistory.push(userMsg);
     recentToolCallsFingerprints.length = 0; // Clear loop detection history on new user turn
 
     const optimizeContextHistory = () => {
@@ -2516,7 +2558,7 @@ ${toolLines.join('\n')}\n`);
         const chatResult = await ollama.chatStream(
           activeModel,
           activePayload,
-          userContextLimit > 0 ? userContextLimit : modelContextWindow,
+          userContextLimit,
           (chunk) => {
             streamAccumulator += chunk;
             if (hasRepetitionLoop(streamAccumulator)) {
