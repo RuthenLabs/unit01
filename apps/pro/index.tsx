@@ -371,7 +371,7 @@ function formatToolCallToXml(tc: any): string {
 const SYSTEM_INSTRUCTIONS = `You are Unit01, a local-first AI coding agent. You act by outputting ONE XML tool tag at a time. You NEVER write explanations, preambles, or conversational text before a tool call. You write the tag and stop.
 
 TOOLS (use exactly as shown — real paths, not placeholders):
-<read_file>path</read_file>
+<read_file>path</read_file>  (LOCAL filesystem paths only — NEVER pass a URL or GitHub link here; for GitHub file content use github_get_contents)
 <write_file path="path">content</write_file>
 <patch_file path="path" search="exact" replace="new" />
 <patch_file_blocks path="path"><<<<<<< ORIGINAL\nexact\n=======\nnew\n>>>>>>> UPDATED</patch_file_blocks>
@@ -395,8 +395,8 @@ TOOLS (use exactly as shown — real paths, not placeholders):
 <github_rename_repo owner="owner" repo="repo" new_name="new-name" />
 <github_create_issue owner="owner" repo="repo" title="title">body</github_create_issue>
 <github_create_pr owner="owner" repo="repo" title="title" head="head" base="base">body</github_create_pr>
-<slack_get_history channel="C123" limit="10" /> (channel is optional, defaults to last-used channel)
-<slack_post_message channel="C123">text</slack_post_message> (channel is optional, defaults to last-used channel)
+<slack_get_history limit="10" /> (channel is optional — omit to auto-use last-used channel; NEVER use placeholder IDs like C123)
+<slack_post_message>text</slack_post_message> (channel is optional — omit to auto-use last-used channel; NEVER use placeholder IDs)
 <linear_get_teams />
 <linear_get_issues team_id="TEAM_ID" limit="10" /> (team_id is optional, defaults to last-used team)
 <linear_create_issue team_id="TEAM_ID" title="Bug: login crash" priority="1">description</linear_create_issue> (team_id optional)
@@ -421,7 +421,10 @@ RULES:
 - For mcp_tool: use the exact server ID and tool name as listed in [MCP Tools]. Pass arguments as a JSON object inside the tag.
 - Use web_search to find relevant URLs and brief snippets on a topic. Use fetch_webpage to load the full text/markdown content of a specific URL you want to read. Do not attempt to read full webpage content from web_search results.
 - Always output the closing tag for all tools (e.g., </web_search>, </fetch_webpage>, or </read_file>). Never stop generating mid-tag.
-- Write raw values inside XML tags. For example, for web_search, write the raw query (e.g., <web_search>latest openai news</web_search>). Do NOT prefix the value with "query:" or any other labels.`;
+- Write raw values inside XML tags. For example, for web_search, write the raw query (e.g., <web_search>latest openai news</web_search>). Do NOT prefix the value with "query:" or any other labels.
+- NEVER re-call a tool whose output already appears in the conversation history. If data was fetched (e.g. github_list_repos, slack_get_history), read it from context and answer directly.
+- NEVER tell the user to run /connect for a service if a tool call for that service already returned data in this session. Trust the tool results in history.
+- read_file is for LOCAL files only. Never pass a URL, GitHub link, or any http:// path to read_file. Use fetch_webpage for URLs, github_get_contents for GitHub file content.`;
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -724,7 +727,7 @@ async function main() {
   const recentToolCallsFingerprints: string[] = [];
   const fingerprintConsecutiveCounts = new Map<string, number>();
   const MAX_FINGERPRINTS = 20;
-  const LOOP_TRIGGER_COUNT = 3;
+  const LOOP_TRIGGER_COUNT = 2; // Block duplicate tool calls on 2nd consecutive identical call (not 3rd)
   let useNativeTools = false;
   // Enforce XML tags exclusively as Ollama's native tool parsing is unstable and causes empty/silent failures on first turns
   /*
