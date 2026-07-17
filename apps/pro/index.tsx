@@ -424,7 +424,8 @@ RULES:
 - Write raw values inside XML tags. For example, for web_search, write the raw query (e.g., <web_search>latest openai news</web_search>). Do NOT prefix the value with "query:" or any other labels.
 - NEVER re-call a tool whose output already appears in the conversation history. If data was fetched (e.g. github_list_repos, slack_get_history), read it from context and answer directly.
 - NEVER tell the user to run /connect for a service if a tool call for that service already returned data in this session. Trust the tool results in history.
-- read_file is for LOCAL files only. Never pass a URL, GitHub link, or any http:// path to read_file. Use fetch_webpage for URLs, github_get_contents for GitHub file content.`;
+- read_file is for LOCAL files only. Never pass a URL, GitHub link, or any http:// path to read_file. Use fetch_webpage for URLs, github_get_contents for GitHub file content.
+- NEVER use generic placeholders like "/path/to/", "current/directory/path", "yourusername", or "/home/yourusername" in tool paths. Instead, look at the absolute paths provided in the [System Environment] block (e.g. Workspace Root Path, User Home Directory) and use the real, actual paths of the target folders on the machine.`;
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -2543,9 +2544,14 @@ ${toolLines.join('\n')}\n`);
         }
       } catch (_) {}
 
+      const systemEnvBlock = `\n\n[System Environment]
+- Workspace Root Path: ${workspaceRoot}
+- User Home Directory: ${os.homedir()}
+- OS Platform: ${process.platform}`;
+
       const systemMessage = {
         role: 'system',
-        content: `${SYSTEM_INSTRUCTIONS}\n\n[Repo Map]\n${currentRepoMap}\n${currentChanges}${memoryContext}${mcpToolsBlock}`
+        content: `${SYSTEM_INSTRUCTIONS}${systemEnvBlock}\n\n[Repo Map]\n${currentRepoMap}\n${currentChanges}${memoryContext}${mcpToolsBlock}`
       };
 
       const activePayload = [systemMessage, ...conversationHistory];
