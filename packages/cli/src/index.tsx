@@ -790,7 +790,7 @@ async function main() {
   }
 
   try {
-    const { indexMissingEmbeddings } = await import('../../pro/src/search/index.js');
+    const { indexMissingEmbeddings } = await import('@unit01/pro/search/index.js');
     await indexMissingEmbeddings(indexer.db, true);
   } catch (e) {}
 
@@ -2087,7 +2087,7 @@ ${activeChanges}`;
             ui.printSystemMessage('error', 'Search limit must be a valid integer between 1 and 20.');
           } else {
             try {
-              const { setSearchLimit } = await import('../../pro/src/connect/integrations/search.js');
+              const { setSearchLimit } = await import('@unit01/pro/connect/integrations/search.js');
               setSearchLimit(limitVal);
               ui.printSystemMessage('info', `Search result count limit set to: ${limitVal}`);
             } catch (e: any) {
@@ -2101,7 +2101,7 @@ ${activeChanges}`;
         if (arg && PROVIDERS.includes(arg.trim().toLowerCase())) {
           const provider = arg.trim().toLowerCase();
           try {
-            const { setSearchProvider } = await import('../../pro/src/connect/integrations/search.js');
+            const { setSearchProvider } = await import('@unit01/pro/connect/integrations/search.js');
             setSearchProvider(provider);
             const label = provider === 'auto' ? 'Auto (use first connected key)' : provider.charAt(0).toUpperCase() + provider.slice(1);
             ui.printSystemMessage('info', `Web search provider set to: ${label}`);
@@ -2113,7 +2113,7 @@ ${activeChanges}`;
 
         // 3. /search with no args — show current provider, current limit, + options
         if (!arg) {
-          const { getSearchProvider, getSearchLimit } = await import('../../pro/src/connect/integrations/search.js');
+          const { getSearchProvider, getSearchLimit } = await import('@unit01/pro/connect/integrations/search.js');
           const { isServiceConnected } = await import('@unit01/core/tier.js');
           const current = getSearchProvider();
           const currentLimit = getSearchLimit();
@@ -2331,7 +2331,7 @@ ${toolLines.join('\n')}\n`);
                 ui.printSystemMessage('info', `Disconnected credentials for service: ${targetService}`);
                 return;
               }
-              const { disconnectService } = await import('../../pro/src/connect/index.js');
+              const { disconnectService } = await import('@unit01/pro/connect/index.js');
               disconnectService(targetService);
               ui.printSystemMessage('info', `Disconnected credentials for service: ${targetService}`);
             } catch (e: any) {
@@ -2360,7 +2360,7 @@ ${toolLines.join('\n')}\n`);
         ui.showToolProgress(`Connecting service ${service}...`);
         try {
           const { isPro, savePlaintextToken } = await import('@unit01/core/tier.js');
-          const { validateServiceToken } = await import('../../pro/src/connect/index.js');
+          const { validateServiceToken } = await import('@unit01/pro/connect/index.js');
 
           if (!isPro()) {
             // Free Tier: Plaintext config flow
@@ -2384,10 +2384,10 @@ ${toolLines.join('\n')}\n`);
             return;
           }
 
-          const { connectService, isSecretToolAvailable } = await import('../../pro/src/connect/index.js');
+          const { connectService, isSecretToolAvailable } = await import('@unit01/pro/connect/index.js');
           
           if (process.platform !== 'darwin' && !isSecretToolAvailable()) {
-            const { vaultExists, unlockWithPassword, initializeVault } = await import('../../pro/src/connect/vault.js');
+            const { vaultExists, unlockWithPassword, initializeVault } = await import('@unit01/pro/connect/vault.js');
             if (vaultExists()) {
               let unlocked = false;
               while (!unlocked) {
@@ -2435,13 +2435,13 @@ ${toolLines.join('\n')}\n`);
           ui.printSystemMessage('info', 'Password vault not used on macOS (using native Keychain).');
           return;
         }
-        const { isSecretToolAvailable } = await import('../../pro/src/connect/index.js');
+        const { isSecretToolAvailable } = await import('@unit01/pro/connect/index.js');
         if (isSecretToolAvailable()) {
           ui.printSystemMessage('info', 'Password vault not used (using Linux Secret Service Keyring).');
           return;
         }
         
-        const { vaultExists, unlockWithRecoveryKey, resetVaultPassword } = await import('../../pro/src/connect/vault.js');
+        const { vaultExists, unlockWithRecoveryKey, resetVaultPassword } = await import('@unit01/pro/connect/vault.js');
         if (!vaultExists()) {
           ui.printSystemMessage('error', 'Vault does not exist. Use /connect to initialize it first.');
           return;
@@ -2728,7 +2728,7 @@ ${toolLines.join('\n')}\n`);
           if (isPro()) {
             ui.printSystemMessage('info', `🤖 [Autopilot] Starting structured build pipeline: "${testCommand}"...`);
             try {
-              const { StructuredBuildPipeline } = await import('../../pro/src/autopilot/pipeline.js');
+              const { StructuredBuildPipeline } = await import('@unit01/pro/autopilot/pipeline.js');
               const pipeline = new StructuredBuildPipeline(workspaceRoot, testCommand, 8);
 
               const result = await pipeline.executePipeline(
