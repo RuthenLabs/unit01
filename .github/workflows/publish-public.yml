@@ -1,0 +1,21 @@
+name: publish-public-mirror
+on:
+  push:
+    branches: [main]
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Strip pro package
+        run: |
+          git rm -r --cached packages/pro
+          rm -rf packages/pro
+          git commit -m "chore: strip pro package for public mirror" --allow-empty
+      - name: Push to public repo
+        env:
+          PUBLIC_REPO_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          git remote add public https://x-access-token:${PUBLIC_REPO_TOKEN}@github.com/RuthenLabs/unit01.git
+          git push public main --force
