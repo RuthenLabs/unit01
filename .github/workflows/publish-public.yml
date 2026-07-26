@@ -10,6 +10,8 @@ jobs:
         with: { fetch-depth: 0 }
       - name: Strip pro package
         run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git rm -r --cached packages/pro
           rm -rf packages/pro
           git commit -m "chore: strip pro package for public mirror" --allow-empty
