@@ -1,0 +1,16 @@
+{
+  "name": "unit01",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": { "u01": "./dist/index.js" },
+  "scripts": {
+    "build": "echo 'Build from repo root with: npx tsc -p tsconfig.json' && exit 1"
+  },
+  "exports": {
+    "./views/*": "./dist/views/*",
+    "./types.js": "./dist/types.js",
+    "./parser.js": "./dist/parser.js",
+    "./app.js": "./dist/app.js"
+  },
+  "dependencies": { "@unit01/core": "workspace:*" }
+}

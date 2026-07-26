@@ -10,7 +10,15 @@
     "skipLibCheck": true,
     "outDir": "./dist",
     "sourceMap": true,
-    "declaration": true
+    "declaration": true,
+    "baseUrl": ".",
+    "paths": {
+      "@unit01/core/tier.js": ["./packages/core/src/tier.ts"],
+      "@unit01/core/warnings.js": ["./packages/core/src/warnings.ts"],
+      "@unit01/core/*": ["./packages/core/src/*"],
+      "@unit01/pro/*": ["./packages/pro/src/*"],
+      "unit01/*": ["./packages/cli/src/*"]
+    }
   },
-  "include": ["src/**/*", "apps/**/*"]
+  "include": ["packages/**/*"]
 }

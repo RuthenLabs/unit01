@@ -1,0 +1,15 @@
+{
+  "name": "@unit01/core",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./indexer/*": "./dist/indexer/*",
+    "./security/*": "./dist/security/*",
+    "./database/*": "./dist/database/*",
+    "./llm/*": "./dist/llm/*",
+    "./session/*": "./dist/session/*",
+    "./mcp/*": "./dist/mcp/*",
+    "./tier.js": "./dist/tier.js",
+    "./warnings.js": "./dist/warnings.js"
+  }
+}

@@ -1,17 +1,19 @@
 {
-  "name": "unit01",
+  "name": "unit01-monorepo",
+  "private": true,
+  "workspaces": ["packages/*"],
   "version": "1.0.0",
   "description": "Directive AI Indexer & Sandbox - Unit 01",
   "type": "module",
-  "main": "dist/apps/pro/index.js",
+  "main": "dist/packages/cli/src/index.js",
   "bin": {
-    "u01": "./dist/apps/pro/index.js"
+    "u01": "./dist/packages/cli/src/index.js"
   },
   "scripts": {
-    "build": "npx tsc",
-    "start": "npx tsc && node --no-warnings dist/apps/pro/index.js",
-    "dev": "node --no-warnings --import tsx apps/pro/index.tsx",
-    "sync-free": "node scripts/sync-from-free.js"
+    "build": "tsc",
+    "postbuild": "cp -r dist/core/src packages/core/dist && cp -r dist/pro/src packages/pro/dist && cp -r dist/cli/src packages/cli/dist && ln -sf cli/src/index.js dist/index.js",
+    "start": "npm run build && node --no-warnings dist/index.js",
+    "dev": "node --no-warnings --import tsx packages/cli/src/index.tsx"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -33,6 +35,7 @@
     "tree-sitter-typescript": "^0.21.1"
   },
   "devDependencies": {
+    "@types/marked-terminal": "^6.1.1",
     "@types/node": "^22.5.0",
     "@types/react": "^18.3.31",
     "tsx": "^4.7.2",
