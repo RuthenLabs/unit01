@@ -1906,7 +1906,7 @@ export async function handleToolCalls(
           if (teams.length === 0) {
             output = 'No Linear teams found in your workspace.';
           } else {
-            output = teams.map(t => `[${t.key}] ${t.name} (ID: ${t.id})`).join('\n');
+            output = teams.map((t: any) => `[${t.key}] ${t.name} (ID: ${t.id})`).join('\n');
           }
           break;
         }
@@ -1919,7 +1919,7 @@ export async function handleToolCalls(
           if (issues.length === 0) {
             output = 'No issues found.';
           } else {
-            output = issues.map(i =>
+            output = issues.map((i: any) =>
               `[${i.identifier}] ${i.title} — ${i.state?.name || 'Unknown'} | Priority: ${i.priority} | Assignee: ${i.assignee?.name || 'Unassigned'}\n  ${i.url}`
             ).join('\n\n');
           }
@@ -1942,7 +1942,7 @@ export async function handleToolCalls(
           if (orgs.length === 0) {
             output = 'No Sentry organizations found.';
           } else {
-            output = orgs.map(o => `[${o.slug}] ${o.name}`).join('\n');
+            output = orgs.map((o: any) => `[${o.slug}] ${o.name}`).join('\n');
           }
           break;
         }
@@ -1956,7 +1956,7 @@ export async function handleToolCalls(
           if (issues.length === 0) {
             output = 'No unresolved Sentry issues found.';
           } else {
-            output = issues.map(i =>
+            output = issues.map((i: any) =>
               `[${i.level.toUpperCase()}] ${i.title}\n  Culprit: ${i.culprit}\n  Occurrences: ${i.count} | Users affected: ${i.userCount}\n  Last seen: ${i.lastSeen}\n  URL: ${i.url}`
             ).join('\n\n');
           }
