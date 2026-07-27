@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "postbuild": "cp -r dist/core/src packages/core/dist && cp -r dist/pro/src packages/pro/dist && cp -r dist/cli/src packages/cli/dist && ln -sf cli/src/index.js dist/index.js",
+    "postbuild": "cp -r dist/core/src packages/core/dist && (cp -r dist/pro/src packages/pro/dist 2>/dev/null || true) && cp -r dist/cli/src packages/cli/dist && ln -sf cli/src/index.js dist/index.js",
     "start": "npm run build && node --no-warnings dist/index.js",
     "dev": "node --no-warnings --import tsx packages/cli/src/index.tsx"
   },
