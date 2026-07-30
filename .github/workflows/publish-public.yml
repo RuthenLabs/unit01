@@ -8,6 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+
       - name: Strip pro package
         run: |
           git config --global user.name "github-actions[bot]"
@@ -15,6 +16,35 @@ jobs:
           git rm -r --cached packages/pro
           rm -rf packages/pro
           git commit -m "chore: strip pro package for public mirror" --allow-empty
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Verify public build works standalone
+        run: |
+          bun install
+          npm run build
+
+          set +e
+          timeout 5s node dist/index.js --help > /tmp/verify-output.log 2>&1
+          EXIT_CODE=$?
+          set -e
+
+          cat /tmp/verify-output.log
+
+          if grep -qiE "Cannot find module|MODULE_NOT_FOUND|TS[0-9]{4}|ERR_MODULE_NOT_FOUND" /tmp/verify-output.log; then
+            echo "::error::Public build verification failed — pro-dependent code detected or build broken."
+            exit 1
+          fi
+
+          # exit 124 = timeout killed it, expected since the CLI is interactive and waits at the prompt
+          if [ "$EXIT_CODE" -ne 0 ] && [ "$EXIT_CODE" -ne 124 ]; then
+            echo "::error::CLI exited unexpectedly with code $EXIT_CODE"
+            exit 1
+          fi
+
+          echo "Public build verified clean — no pro dependency, compiles and launches successfully."
+
       - name: Push to public repo
         env:
           PUBLIC_REPO_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
