@@ -789,10 +789,12 @@ async function main() {
     memoryStore = new ProjectMemoryStore(indexer.db);
   }
 
-  try {
-    const { indexMissingEmbeddings } = await import('@unit01/pro/search/index.js');
-    await indexMissingEmbeddings(indexer.db, true);
-  } catch (e) {}
+  if (isPro()) {
+    try {
+      const { indexMissingEmbeddings } = await import('@unit01/pro/search/index.js');
+      await indexMissingEmbeddings(indexer.db, true);
+    } catch (e) {}
+  }
 
   // Boot MCP servers silently in the background
   try {
@@ -2076,6 +2078,11 @@ ${activeChanges}`;
       }
 
       if (command === '/search') {
+        const { isPro } = await import('@unit01/core/tier.js');
+        if (!isPro()) {
+          ui.printSystemMessage('error', 'Web search configuration is a Pro tier feature. Upgrade to Pro to configure search integration.');
+          return;
+        }
         const PROVIDERS = ['tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
 
         const argTrimmed = arg ? arg.trim().toLowerCase() : '';
@@ -2360,11 +2367,10 @@ ${toolLines.join('\n')}\n`);
         ui.showToolProgress(`Connecting service ${service}...`);
         try {
           const { isPro, savePlaintextToken } = await import('@unit01/core/tier.js');
-          const { validateServiceToken } = await import('@unit01/pro/connect/index.js');
 
           if (!isPro()) {
             // Free Tier: Plaintext config flow
-            const isValid = await validateServiceToken(service, token);
+            const isValid = token.length > 0;
             ui.hideToolProgress();
             if (!isValid) {
               ui.printSystemMessage('error', `Failed to validate token for ${service}. Please check your credentials.`);
@@ -2377,14 +2383,13 @@ ${toolLines.join('\n')}\n`);
           }
 
           // Pro Tier: Secure Keychain/Vault flow
+          const { validateServiceToken, connectService, isSecretToolAvailable } = await import('@unit01/pro/connect/index.js');
           const isValid = await validateServiceToken(service, token);
           if (!isValid) {
             ui.hideToolProgress();
             ui.printSystemMessage('error', `Failed to validate token for ${service}. Please check your credentials.`);
             return;
           }
-
-          const { connectService, isSecretToolAvailable } = await import('@unit01/pro/connect/index.js');
           
           if (process.platform !== 'darwin' && !isSecretToolAvailable()) {
             const { vaultExists, unlockWithPassword, initializeVault } = await import('@unit01/pro/connect/vault.js');

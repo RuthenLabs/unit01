@@ -44,9 +44,36 @@ export function savePlaintextToken(service: string, token: string): void {
 
 export function deletePlaintextToken(service: string): void {
   const conf = loadPlaintextConfig();
-  if (conf.tokens && conf.tokens[service]) {
-    delete conf.tokens[service];
+  let modified = false;
+  if (conf.tokens) {
+    if (conf.tokens[service]) {
+      delete conf.tokens[service];
+      modified = true;
+    }
+    const tokenKey = `${service}-token`;
+    if (conf.tokens[tokenKey]) {
+      delete conf.tokens[tokenKey];
+      modified = true;
+    }
+  }
+  if (modified) {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(conf, null, 2), { mode: 0o600 });
+  }
+
+  // Also clean up macOS Keychain and Linux Secret Service entries to avoid leftover credentials
+  const names = [service, `${service}-token`];
+  for (const name of names) {
+    if (process.platform === 'darwin') {
+      try {
+        const { execFileSync } = require('child_process');
+        execFileSync('security', ['delete-generic-password', '-a', 'unit01', '-s', `unit01-${name}`], { stdio: 'ignore' });
+      } catch {}
+    } else if (process.platform === 'linux') {
+      try {
+        const { execFileSync } = require('child_process');
+        execFileSync('secret-tool', ['clear', 'application', 'unit01', 'service', name], { stdio: 'ignore' });
+      } catch {}
+    }
   }
 }
 
@@ -58,7 +85,7 @@ export function isPro(): boolean {
   try {
     const filename = fileURLToPath(import.meta.url);
     const dirname = path.dirname(filename);
-    const proPath = path.join(dirname, '../pro');
+    const proPath = path.join(dirname, '../../pro');
     if (fs.existsSync(proPath)) {
       _cachedIsPro = true;
       return true;

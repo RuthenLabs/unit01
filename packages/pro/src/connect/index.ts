@@ -156,18 +156,21 @@ export function isServiceConnected(service: string): boolean {
  * Delete service credentials and drop tokens.
  */
 export function disconnectService(service: string): void {
-  if (process.platform === 'darwin') {
-    deleteFromKeychain(service);
-  } else if (isSecretToolAvailable()) {
-    deleteFromSecretTool(service);
-  } else {
+  const names = [service, `${service}-token`];
+  for (const name of names) {
+    if (process.platform === 'darwin') {
+      deleteFromKeychain(name);
+    } else if (isSecretToolAvailable()) {
+      deleteFromSecretTool(name);
+    } else {
+      try {
+        deleteCredential(name);
+      } catch (_) {}
+    }
     try {
-      deleteCredential(service);
+      deletePlaintextToken(name);
     } catch (_) {}
   }
-  try {
-    deletePlaintextToken(service);
-  } catch (_) {}
 }
 
 export { isSecretToolAvailable } from './keychain.js';
