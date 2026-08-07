@@ -672,6 +672,21 @@ function detectAndLoadImages(text: string, workspaceRoot: string, ui: UiAdapter)
   return imageBase64s;
 }
 
+function printCliHelp() {
+  console.log(`
+Usage: u01 [options]
+
+Options:
+  -h, --help            Show this help message
+  --workspace <path>    Specify the workspace root directory
+  --model <name>        Specify the Ollama model to use
+  -p <prompt>           Run in non-interactive mode with a single prompt
+  --allow <path>        Allow read-write access to a path outside the workspace
+  --allow-read <path>   Allow read-only access to a path outside the workspace
+  -c, --continue        Continue the last active session
+`);
+}
+
 async function main() {
   const workspaceRoot = process.cwd();
 
@@ -683,7 +698,10 @@ async function main() {
   let continueSession = false;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--workspace' && i + 1 < args.length) {
+    if (args[i] === '--help' || args[i] === '-h') {
+      printCliHelp();
+      process.exit(0);
+    } else if (args[i] === '--workspace' && i + 1 < args.length) {
       i++;
     } else if (args[i] === '--model' && i + 1 < args.length) {
       activeModelArg = args[i + 1];
