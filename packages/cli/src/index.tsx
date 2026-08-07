@@ -11,7 +11,7 @@ import { render } from 'ink';
 import React from 'react';
 
 import { DirectiveIndexer } from '@unit01/core/indexer/index.js';
-import { DirectiveSandbox, redactSecrets } from '@unit01/core/security/sandbox.js';
+import { ExecutionGuard, redactSecrets } from '@unit01/core/security/guard.js';
 import { ollama } from '@unit01/core/llm/client.js';
 import { buildRepoMap } from '@unit01/core/indexer/repomap.js';
 import { AllowedPath } from '@unit01/core/security/types.js';
@@ -194,7 +194,7 @@ const OLLAMA_TOOLS = [
     type: 'function',
     function: {
       name: 'run_command',
-      description: 'Executes a command inside the sandboxed environment (running tests, builds, linting).',
+      description: 'Executes a shell command in the workspace (running tests, builds, linting).',
       parameters: {
         type: 'object',
         properties: {
@@ -504,7 +504,6 @@ interface Unit01Config {
   compact_threshold?: number;
   test_command?: string;
   personality?: string;
-  strict_sandbox?: boolean;
   context_limit?: number; // Optional: override Ollama's VRAM-aware default (e.g. 8192, 32768)
 }
 
@@ -804,13 +803,11 @@ async function main() {
 
   const filesCount = indexer.db.getAllFiles().length;
 
-  const sandbox = new DirectiveSandbox(
+  const guard = new ExecutionGuard(
     workspaceRoot,
     state.activeAllowedPaths,
-    () => {},
-    config.strict_sandbox || false
+    () => {}
   );
-  await sandbox.initialize([], { silent: true });
 
   const sessionStore = new SessionStore(workspaceRoot);
   const gitBranch = getGitBranch(workspaceRoot);
@@ -1020,7 +1017,6 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
     } finally {
       if (state.isNonInteractive) {
         try { indexer.close(); } catch (e) {}
-        try { sandbox.stop(); } catch (e) {}
         setTimeout(() => {
           ui.exit(0);
         }, 100);
@@ -1046,7 +1042,6 @@ Output ONLY the <checkpoint_response> tag and nothing else.`;
           });
         }
         indexer.close();
-        sandbox.stop();
         ui.exit(0);
         return;
       }
@@ -2037,7 +2032,7 @@ ${activeChanges}`;
           const restoredPath = dbBackup.original_path;
           const success = indexer.undoWrite(restoredPath);
           if (success) {
-            sandbox.clearLoopHistory();
+            guard.clearLoopHistory();
             // Re-index the restored file
             try {
               if (fs.existsSync(restoredPath)) {
@@ -2670,7 +2665,7 @@ ${toolLines.join('\n')}\n`);
               if (writtenPath && ['write_file', 'patch_file', 'patch_file_blocks', 'delete_file', 'make_dir', 'copy_file'].includes(tc.function?.name)) {
                 evictReadFingerprintsForPath(writtenPath);
               }
-              toolResult = await handleToolCalls(xmlEquivalent, sandbox, indexer, ui, state, fileReadCache);
+              toolResult = await handleToolCalls(xmlEquivalent, guard, indexer, ui, state, fileReadCache);
             }
           }
         } else {
@@ -2713,7 +2708,7 @@ ${toolLines.join('\n')}\n`);
               }
               if (writtenPath) evictReadFingerprintsForPath(writtenPath);
             }
-            toolResult = await handleToolCalls(cleanedResponse, sandbox, indexer, ui, state, fileReadCache);
+            toolResult = await handleToolCalls(cleanedResponse, guard, indexer, ui, state, fileReadCache);
           }
         }
 

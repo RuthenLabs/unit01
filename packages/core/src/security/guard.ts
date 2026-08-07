@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { EgressProxy, TIER1_DOMAINS, detectTier2Domains } from './proxy.js';
+
 import { AllowedPath } from './types.js';
 
 const BLACKLIST = new Set([
@@ -259,28 +259,23 @@ function isBuildCommand(tokens: string[]): boolean {
   return false;
 }
 
-export class DirectiveSandbox {
+export class ExecutionGuard {
   private workspaceRoot: string;
   private loopDetector = new LoopDetector();
-  private egressProxy: EgressProxy | null = null;
-  public proxyPort: number = 0;
   private writtenFiles = new Set<string>();
   private sessionStartTime: number;
   private allowedPaths: AllowedPath[] = [];
   private onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void;
-  private strictSandbox: boolean;
 
   constructor(
     workspaceRoot: string,
     allowedPaths: AllowedPath[] = [],
-    onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void,
-    strictSandbox: boolean = false
+    onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void
   ) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.sessionStartTime = Date.now();
     this.allowedPaths = allowedPaths;
     this.onSystemMessage = onSystemMessage;
-    this.strictSandbox = strictSandbox;
   }
 
   public updateAllowedPaths(allowedPaths: AllowedPath[]) {
@@ -419,19 +414,7 @@ export class DirectiveSandbox {
     return null;
   }
 
-  /**
-   * Initializes the Sandbox (egress proxy retired).
-   */
-  public async initialize(tier3Domains: string[] = [], options?: { silent?: boolean }) {
-    // Egress proxy retired to prevent network build blockages
-  }
 
-  /**
-   * Clean up the egress proxy when the sandbox session ends.
-   */
-  public stop() {
-    // Egress proxy retired
-  }
 
   public clearLoopHistory() {
     this.loopDetector.clear();
@@ -485,7 +468,7 @@ export class DirectiveSandbox {
   }
 
   /**
-   * Execute a shell command inside the sandbox container.
+   * Execute a shell command with guardrails (path checks, blacklist, loop detection, timeout).
    */
   public async runCommand(command: string): Promise<string> {
     const resolvedCommand = this.resolvePaths(command.trim());
@@ -499,24 +482,24 @@ export class DirectiveSandbox {
 
     // 1. Block cd commands
     if (containsCdCommand(trimmedCommand)) {
-      return '[DIRECTIVE AI] Directory changes not allowed. Use absolute paths.';
+      return '[unit01] Directory changes not allowed. Use absolute paths.';
     }
 
     // 2. Blacklist check
     if (isBlacklisted(trimmedCommand)) {
-      return '[DIRECTIVE AI] Command not allowed by security policy.';
+      return '[unit01] Command not allowed by security policy.';
     }
 
     // 3. Loop detection check
     if (this.loopDetector.checkLoop(trimmedCommand)) {
-      return '[DIRECTIVE AI] opps its a loop — same command ran 3 times with same result. Stop and try a different approach.';
+      return '[unit01] Loop detected — same command ran 3 times with same result. Stop and try a different approach.';
     }
 
     // 4. Set up resource limit ulimit prefix
     const ulimitPrefix = 'ulimit -n 2048';
     const innerCommand = `${ulimitPrefix} && ${trimmedCommand}`;
 
-    // 5. Execute standard direct spawn on host shell (egress proxy and containers retired)
+    // 5. Execute on host shell
     const execCommand = '/bin/sh';
     const execArgs = ['-c', innerCommand];
     const env = { ...process.env };
@@ -560,7 +543,7 @@ export class DirectiveSandbox {
 
         let result = outputBuffer;
         if (killed) {
-          result += '\n[Directive AI] Process terminated: execution timed out after 30 seconds.';
+          result += '\n[unit01] Process terminated: execution timed out after 30 seconds.';
         } else if (code !== 0 && code !== null) {
           result = `[Command failed with exit code ${code}]\n${result}`;
         }
@@ -577,7 +560,7 @@ export class DirectiveSandbox {
 
       child.on('error', (err) => {
         clearTimeout(timeoutTimer);
-        resolve(`[Directive AI Sandbox] Execution failed to start: ${err.message}`);
+        resolve(`[unit01] Execution failed to start: ${err.message}`);
       });
     });
   }

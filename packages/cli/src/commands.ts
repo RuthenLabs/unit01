@@ -6,7 +6,7 @@ import * as os from 'os';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
 import { DirectiveIndexer } from '@unit01/core/indexer/index.js';
-import { DirectiveSandbox } from '@unit01/core/security/sandbox.js';
+import { ExecutionGuard } from '@unit01/core/security/guard.js';
 import { buildRepoMap } from '@unit01/core/indexer/repomap.js';
 import { AllowedPath } from '@unit01/core/security/types.js';
 import { ChunkRecord } from '@unit01/core/database/db.js';
@@ -77,7 +77,7 @@ async function requestPathAccess(
   mode: 'ro' | 'rw',
   ui: UiAdapter,
   state: CliState,
-  sandbox: DirectiveSandbox
+  guard: ExecutionGuard
 ): Promise<boolean> {
   const options = mode === 'rw' 
     ? ['Allow read-write', 'Allow read-only', 'Deny']
@@ -101,14 +101,14 @@ async function requestPathAccess(
       state.activeAllowedPaths = state.activeAllowedPaths.filter(ap => ap.path !== absPath);
       state.activeAllowedPaths.push({ path: absPath, mode: 'rw' });
     }
-    sandbox.updateAllowedPaths(state.activeAllowedPaths);
+    guard.updateAllowedPaths(state.activeAllowedPaths);
     return true;
   }
   if (choice === 'Allow read-only') {
     if (!state.activeAllowedPaths.some(ap => ap.path === absPath)) {
       state.activeAllowedPaths.push({ path: absPath, mode: 'ro' });
     }
-    sandbox.updateAllowedPaths(state.activeAllowedPaths);
+    guard.updateAllowedPaths(state.activeAllowedPaths);
     return true;
   }
   return false;
@@ -116,7 +116,7 @@ async function requestPathAccess(
 
 export async function handleToolCalls(
   text: string,
-  sandbox: DirectiveSandbox,
+  guard: ExecutionGuard,
   indexer: DirectiveIndexer,
   ui: UiAdapter,
   state: CliState,
@@ -159,11 +159,11 @@ export async function handleToolCalls(
 
   const deletePath = parseDeleteFile(text);
   if (deletePath !== null) {
-    const absPath = resolvePath(sandbox['workspaceRoot'], deletePath);
+    const absPath = resolvePath(guard['workspaceRoot'], deletePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'delete_file', filePath: deletePath });
 
-    if (!sandbox.isPathWriteAllowed(absPath)) {
-      const granted = await requestPathAccess(absPath, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absPath)) {
+      const granted = await requestPathAccess(absPath, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -247,7 +247,7 @@ export async function handleToolCalls(
         indexer.db.removeFile(absPath);
       }
 
-      sandbox.clearLoopHistory();
+      guard.clearLoopHistory();
       indexer.currentRepoMap = buildRepoMap(indexer.db);
 
       ui.hideToolProgress();
@@ -288,11 +288,11 @@ export async function handleToolCalls(
 
   const makeDirPath = parseMakeDir(text);
   if (makeDirPath !== null) {
-    const absPath = resolvePath(sandbox['workspaceRoot'], makeDirPath);
+    const absPath = resolvePath(guard['workspaceRoot'], makeDirPath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'make_dir', filePath: makeDirPath });
 
-    if (!sandbox.isPathWriteAllowed(absPath)) {
-      const granted = await requestPathAccess(absPath, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absPath)) {
+      const granted = await requestPathAccess(absPath, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -347,12 +347,12 @@ export async function handleToolCalls(
   const copyFileParams = parseCopyFile(text);
   if (copyFileParams !== null) {
     const { sourcePath, destinationPath } = copyFileParams;
-    const absSrc = resolvePath(sandbox['workspaceRoot'], sourcePath);
-    const absDest = resolvePath(sandbox['workspaceRoot'], destinationPath);
+    const absSrc = resolvePath(guard['workspaceRoot'], sourcePath);
+    const absDest = resolvePath(guard['workspaceRoot'], destinationPath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'copy_file', sourcePath, destinationPath });
 
-    if (!sandbox.isPathAllowed(absSrc)) {
-      const granted = await requestPathAccess(absSrc, 'ro', ui, state, sandbox);
+    if (!guard.isPathAllowed(absSrc)) {
+      const granted = await requestPathAccess(absSrc, 'ro', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -366,8 +366,8 @@ export async function handleToolCalls(
       }
     }
 
-    if (!sandbox.isPathWriteAllowed(absDest)) {
-      const granted = await requestPathAccess(absDest, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absDest)) {
+      const granted = await requestPathAccess(absDest, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -428,7 +428,7 @@ export async function handleToolCalls(
 
       fs.copyFileSync(absSrc, absDest);
       
-      sandbox.clearLoopHistory();
+      guard.clearLoopHistory();
 
       // Add to indexer DB
       try {
@@ -457,10 +457,10 @@ export async function handleToolCalls(
 
   const outlinePath = parseViewOutline(text);
   if (outlinePath !== null) {
-    const absPath = resolvePath(sandbox['workspaceRoot'], outlinePath);
+    const absPath = resolvePath(guard['workspaceRoot'], outlinePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'view_outline', outlinePath });
 
-    if (!sandbox.isPathAllowed(absPath)) {
+    if (!guard.isPathAllowed(absPath)) {
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -559,7 +559,7 @@ export async function handleToolCalls(
           state.activeAllowedPaths = state.activeAllowedPaths.filter(ap => ap.path !== absPath);
           state.activeAllowedPaths.push({ path: absPath, mode: 'rw' });
         }
-        sandbox.updateAllowedPaths(state.activeAllowedPaths);
+        guard.updateAllowedPaths(state.activeAllowedPaths);
         return {
           toolRun: true,
           nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -591,7 +591,7 @@ export async function handleToolCalls(
         if (!state.activeAllowedPaths.some(ap => ap.path === absPath)) {
           state.activeAllowedPaths.push({ path: absPath, mode: 'ro' });
         }
-        sandbox.updateAllowedPaths(state.activeAllowedPaths);
+        guard.updateAllowedPaths(state.activeAllowedPaths);
         return {
           toolRun: true,
           nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -621,7 +621,7 @@ export async function handleToolCalls(
     const cmd = runCmd;
     if (isGui) guiEmit({ type: 'tool-call', tool: 'run_command', command: cmd });
     ui.showToolProgress(`${themePrimary('run')} ${cmd}...`);
-    const output = await sandbox.runCommand(cmd);
+    const output = await guard.runCommand(cmd);
     ui.hideToolProgress();
 
     if (output.startsWith('[DIRECTIVE AI]')) {
@@ -637,7 +637,7 @@ export async function handleToolCalls(
             service: 'shell',
             operation: 'execute_script',
             target: cmd,
-            payload_summary: `Command blocked by sandbox: ${cmd}`,
+            payload_summary: `Command blocked by guard: ${cmd}`,
             payload_hash: payloadHash,
             status: 'denied'
           });
@@ -723,7 +723,7 @@ export async function handleToolCalls(
     return {
       toolRun: true,
       nextPrompt: `<tool_output>\n${outputResult}\n</tool_output>`,
-      consoleOutput: `\n[Sandbox output executed: ${cmd}]`
+      consoleOutput: `\n[Command output executed: ${cmd}]`
     };
   }
 
@@ -731,11 +731,11 @@ export async function handleToolCalls(
   if (writeResult) {
     const filePath = writeResult.filePath;
     const content = writeResult.content;
-    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(guard['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'write_file', filePath });
     
-    if (!sandbox.isPathWriteAllowed(absPath)) {
-      const granted = await requestPathAccess(absPath, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absPath)) {
+      const granted = await requestPathAccess(absPath, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -803,11 +803,11 @@ export async function handleToolCalls(
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
       fs.writeFileSync(absPath, content, 'utf-8');
       
-      // Clear sandbox loop history since file modification changes workspace state
-      sandbox.clearLoopHistory();
+      // Clear guard loop history since file modification changes workspace state
+      guard.clearLoopHistory();
       
-      // Record written file for sandbox write-before-run enforcement
-      sandbox.recordWrittenFile(absPath);
+      // Record written file for guard write-before-run enforcement
+      guard.recordWrittenFile(absPath);
       
       // Re-index
       try {
@@ -855,11 +855,11 @@ export async function handleToolCalls(
   const readPath = parseReadFile(text);
   if (readPath !== null) {
     const filePath = readPath;
-    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(guard['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'read_file', filePath });
     
-    if (!sandbox.isPathAllowed(absPath)) {
-      const granted = await requestPathAccess(absPath, 'ro', ui, state, sandbox);
+    if (!guard.isPathAllowed(absPath)) {
+      const granted = await requestPathAccess(absPath, 'ro', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -1078,11 +1078,11 @@ export async function handleToolCalls(
   const patchResult = parsePatchFile(text);
   if (patchResult) {
     const { filePath, search, replace } = patchResult;
-    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(guard['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'patch_file', filePath, search, replace });
 
-    if (!sandbox.isPathWriteAllowed(absPath)) {
-      const granted = await requestPathAccess(absPath, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absPath)) {
+      const granted = await requestPathAccess(absPath, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -1102,7 +1102,7 @@ export async function handleToolCalls(
       if (!fs.existsSync(absPath)) {
         ui.hideToolProgress();
         ui.printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
-        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const relPath = path.relative(guard['workspaceRoot'], absPath);
         const errObj = {
           error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
           code: "PATCH_NOT_FOUND",
@@ -1120,7 +1120,7 @@ export async function handleToolCalls(
       if (index === -1) {
         ui.hideToolProgress();
         ui.printToolResult('failure', `Patched ${filePath} (failed: search string not found)`);
-        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const relPath = path.relative(guard['workspaceRoot'], absPath);
         const errObj = {
           error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
           code: "PATCH_NOT_FOUND",
@@ -1138,8 +1138,8 @@ export async function handleToolCalls(
       const updated = content.slice(0, index) + replace + content.slice(index + search.length);
       fs.writeFileSync(absPath, updated, 'utf-8');
 
-      sandbox.clearLoopHistory();
-      sandbox.recordWrittenFile(absPath);
+      guard.clearLoopHistory();
+      guard.recordWrittenFile(absPath);
 
       try {
         const stat = fs.statSync(absPath);
@@ -1184,11 +1184,11 @@ export async function handleToolCalls(
   const patchBlocksResult = parsePatchFileBlocks(text);
   if (patchBlocksResult) {
     const { filePath, diff } = patchBlocksResult;
-    const absPath = resolvePath(sandbox['workspaceRoot'], filePath);
+    const absPath = resolvePath(guard['workspaceRoot'], filePath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'patch_file_blocks', filePath });
 
-    if (!sandbox.isPathWriteAllowed(absPath)) {
-      const granted = await requestPathAccess(absPath, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absPath)) {
+      const granted = await requestPathAccess(absPath, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -1208,7 +1208,7 @@ export async function handleToolCalls(
       if (!fs.existsSync(absPath)) {
         ui.hideToolProgress();
         ui.printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
-        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const relPath = path.relative(guard['workspaceRoot'], absPath);
         const errObj = {
           error: `File not found at ${filePath}`,
           code: "PATCH_FILE_NOT_FOUND",
@@ -1229,7 +1229,7 @@ export async function handleToolCalls(
       } catch (err: any) {
         ui.hideToolProgress();
         ui.printToolResult('failure', `Patched ${filePath} (failed: applying blocks failed)`);
-        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const relPath = path.relative(guard['workspaceRoot'], absPath);
         const errObj = {
           error: err.message || String(err),
           code: err.code || "PATCH_BLOCK_FAILED",
@@ -1247,8 +1247,8 @@ export async function handleToolCalls(
 
       fs.writeFileSync(absPath, updated, 'utf-8');
 
-      sandbox.clearLoopHistory();
-      sandbox.recordWrittenFile(absPath);
+      guard.clearLoopHistory();
+      guard.recordWrittenFile(absPath);
 
       try {
         const stat = fs.statSync(absPath);
@@ -1295,11 +1295,11 @@ export async function handleToolCalls(
   const listDirResult = parseListDir(text);
   if (listDirResult) {
     const { pathVal, recursive } = listDirResult;
-    const absPath = resolvePath(sandbox['workspaceRoot'], pathVal);
+    const absPath = resolvePath(guard['workspaceRoot'], pathVal);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'list_dir', pathVal, recursive });
 
-    if (!sandbox.isPathAllowed(absPath)) {
-      const granted = await requestPathAccess(absPath, 'ro', ui, state, sandbox);
+    if (!guard.isPathAllowed(absPath)) {
+      const granted = await requestPathAccess(absPath, 'ro', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -1331,7 +1331,7 @@ export async function handleToolCalls(
         };
       }
 
-      const result = listDirectory(absPath, sandbox['workspaceRoot'], recursive);
+      const result = listDirectory(absPath, guard['workspaceRoot'], recursive);
 
       ui.hideToolProgress();
       ui.printToolResult('success', `Listed directory ${pathVal}`);
@@ -1358,7 +1358,7 @@ export async function handleToolCalls(
     try {
       let isGit = false;
       try {
-        execSync('git rev-parse --is-inside-work-tree', { cwd: sandbox['workspaceRoot'], stdio: 'ignore' });
+        execSync('git rev-parse --is-inside-work-tree', { cwd: guard['workspaceRoot'], stdio: 'ignore' });
         isGit = true;
       } catch (e) {}
 
@@ -1376,8 +1376,8 @@ export async function handleToolCalls(
         };
       }
 
-      const branch = execSync('git branch --show-current', { cwd: sandbox['workspaceRoot'] }).toString().trim();
-      const statusText = execSync('git status --porcelain', { cwd: sandbox['workspaceRoot'] }).toString().trim();
+      const branch = execSync('git branch --show-current', { cwd: guard['workspaceRoot'] }).toString().trim();
+      const statusText = execSync('git status --porcelain', { cwd: guard['workspaceRoot'] }).toString().trim();
 
       const lines = statusText ? statusText.split('\n') : [];
       const staged: string[] = [];
@@ -1404,7 +1404,7 @@ export async function handleToolCalls(
       let ahead = 0;
       let behind = 0;
       try {
-        const revList = execSync('git rev-list --left-right --count HEAD...@{u}', { cwd: sandbox['workspaceRoot'], stdio: 'pipe' }).toString().trim();
+        const revList = execSync('git rev-list --left-right --count HEAD...@{u}', { cwd: guard['workspaceRoot'], stdio: 'pipe' }).toString().trim();
         const parts = revList.split(/\s+/);
         if (parts.length === 2) {
           ahead = parseInt(parts[0], 10) || 0;
@@ -1442,7 +1442,7 @@ export async function handleToolCalls(
   const diagResult = parseDiagnosticsTag(text);
   if (diagResult !== null) {
     let commandToRun = diagResult.command;
-    const workspaceRoot = sandbox['workspaceRoot'];
+    const workspaceRoot = guard['workspaceRoot'];
 
     if (!commandToRun) {
       if (fs.existsSync(path.join(workspaceRoot, 'package.json'))) {
@@ -1480,7 +1480,7 @@ export async function handleToolCalls(
     process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('diagnostics')} (running "${commandToRun}") ...`);
 
     try {
-      const rawOutput = await sandbox.runCommand(commandToRun);
+      const rawOutput = await guard.runCommand(commandToRun);
       
       const parsed = parseDiagnostics(rawOutput);
       const result = {
@@ -1511,12 +1511,12 @@ export async function handleToolCalls(
   const moveResult = parseMoveFile(text);
   if (moveResult !== null) {
     const { sourcePath, destinationPath } = moveResult;
-    const absSource = resolvePath(sandbox['workspaceRoot'], sourcePath);
-    const absDest = resolvePath(sandbox['workspaceRoot'], destinationPath);
+    const absSource = resolvePath(guard['workspaceRoot'], sourcePath);
+    const absDest = resolvePath(guard['workspaceRoot'], destinationPath);
     if (isGui) guiEmit({ type: 'tool-call', tool: 'move_file', sourcePath, destinationPath });
 
-    if (!sandbox.isPathWriteAllowed(absSource)) {
-      const granted = await requestPathAccess(absSource, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absSource)) {
+      const granted = await requestPathAccess(absSource, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -1530,8 +1530,8 @@ export async function handleToolCalls(
       }
     }
 
-    if (!sandbox.isPathWriteAllowed(absDest)) {
-      const granted = await requestPathAccess(absDest, 'rw', ui, state, sandbox);
+    if (!guard.isPathWriteAllowed(absDest)) {
+      const granted = await requestPathAccess(absDest, 'rw', ui, state, guard);
       if (!granted) {
         return {
           toolRun: true,
@@ -1580,8 +1580,8 @@ export async function handleToolCalls(
       fs.renameSync(absSource, absDest);
 
       indexer.renameFile(absSource, absDest);
-      sandbox.recordWrittenFile(absDest);
-      sandbox.clearLoopHistory();
+      guard.recordWrittenFile(absDest);
+      guard.clearLoopHistory();
 
       ui.hideToolProgress();
       ui.printToolResult('success', `Moved ${sourcePath} to ${destinationPath}`);
@@ -1658,7 +1658,7 @@ export async function handleToolCalls(
           state.activeAllowedPaths = state.activeAllowedPaths.filter(ap => ap.path !== absPath);
           state.activeAllowedPaths.push({ path: absPath, mode: 'rw' });
         }
-        sandbox.updateAllowedPaths(state.activeAllowedPaths);
+        guard.updateAllowedPaths(state.activeAllowedPaths);
         return {
           toolRun: true,
           nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1690,7 +1690,7 @@ export async function handleToolCalls(
         if (!state.activeAllowedPaths.some(ap => ap.path === absPath)) {
           state.activeAllowedPaths.push({ path: absPath, mode: 'ro' });
         }
-        sandbox.updateAllowedPaths(state.activeAllowedPaths);
+        guard.updateAllowedPaths(state.activeAllowedPaths);
         return {
           toolRun: true,
           nextPrompt: `<tool_output>\n${JSON.stringify({
