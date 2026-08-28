@@ -266,16 +266,19 @@ export class ExecutionGuard {
   private sessionStartTime: number;
   private allowedPaths: AllowedPath[] = [];
   private onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void;
+  private commandTimeoutMs: number;
 
   constructor(
     workspaceRoot: string,
     allowedPaths: AllowedPath[] = [],
-    onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void
+    onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void,
+    commandTimeoutMs: number = 30000
   ) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.sessionStartTime = Date.now();
     this.allowedPaths = allowedPaths;
     this.onSystemMessage = onSystemMessage;
+    this.commandTimeoutMs = commandTimeoutMs > 0 ? commandTimeoutMs : 30000;
   }
 
   public updateAllowedPaths(allowedPaths: AllowedPath[]) {
@@ -470,7 +473,7 @@ export class ExecutionGuard {
   /**
    * Execute a shell command with guardrails (path checks, blacklist, loop detection, timeout).
    */
-  public async runCommand(command: string): Promise<string> {
+  public async runCommand(command: string, customTimeoutMs?: number): Promise<string> {
     const resolvedCommand = this.resolvePaths(command.trim());
     const trimmedCommand = resolvedCommand.trim();
 
@@ -504,8 +507,14 @@ export class ExecutionGuard {
     const execArgs = ['-c', innerCommand];
     const env = { ...process.env };
 
+    const timeoutMs = (customTimeoutMs && customTimeoutMs > 0) ? customTimeoutMs : this.commandTimeoutMs;
+    const timeoutSec = Math.max(1, Math.round(timeoutMs / 1000));
+
     return new Promise((resolve) => {
+      const MAX_STREAM_BYTES = 256 * 1024; // 256KB cap on collected process output stream
       let outputBuffer = '';
+      let streamCapped = false;
+
       const child = spawn(execCommand, execArgs, {
         cwd: this.workspaceRoot,
         env,
@@ -513,18 +522,30 @@ export class ExecutionGuard {
       });
 
       child.stdout.on('data', (data) => {
-        outputBuffer += data.toString();
+        if (outputBuffer.length < MAX_STREAM_BYTES) {
+          outputBuffer += data.toString();
+          if (outputBuffer.length >= MAX_STREAM_BYTES) {
+            outputBuffer = outputBuffer.slice(0, MAX_STREAM_BYTES);
+            streamCapped = true;
+          }
+        }
       });
 
       child.stderr.on('data', (data) => {
-        outputBuffer += data.toString();
+        if (outputBuffer.length < MAX_STREAM_BYTES) {
+          outputBuffer += data.toString();
+          if (outputBuffer.length >= MAX_STREAM_BYTES) {
+            outputBuffer = outputBuffer.slice(0, MAX_STREAM_BYTES);
+            streamCapped = true;
+          }
+        }
       });
 
-      // Implement timeout logic: 30 seconds SIGTERM -> wait 2s -> SIGKILL
+      // Implement timeout logic: timeoutMs SIGTERM -> wait 2s -> SIGKILL
       let killed = false;
       const timeoutTimer = setTimeout(() => {
         if (this.onSystemMessage) {
-          this.onSystemMessage('warn', `Command timed out after 30s: "${trimmedCommand}". Sending SIGTERM...`);
+          this.onSystemMessage('warn', `Command timed out after ${timeoutSec}s: "${trimmedCommand}". Sending SIGTERM...`);
         }
         killed = true;
         child.kill('SIGTERM');
@@ -536,14 +557,17 @@ export class ExecutionGuard {
         child.once('close', () => {
           clearTimeout(killForceTimer);
         });
-      }, 30000);
+      }, timeoutMs);
 
       child.on('close', (code) => {
         clearTimeout(timeoutTimer);
 
         let result = outputBuffer;
+        if (streamCapped) {
+          result += '\n[unit01] Process output exceeded 256KB and was capped in memory.';
+        }
         if (killed) {
-          result += '\n[unit01] Process terminated: execution timed out after 30 seconds.';
+          result += `\n[unit01] Process terminated: execution timed out after ${timeoutSec} seconds.`;
         } else if (code !== 0 && code !== null) {
           result = `[Command failed with exit code ${code}]\n${result}`;
         }

@@ -504,6 +504,7 @@ interface Unit01Config {
   compact_threshold?: number;
   test_command?: string;
   personality?: string;
+  command_timeout?: number; // Optional timeout in seconds (e.g. 60, 120). Default: 30
   context_limit?: number; // Optional: override Ollama's VRAM-aware default (e.g. 8192, 32768)
 }
 
@@ -821,10 +822,15 @@ async function main() {
 
   const filesCount = indexer.db.getAllFiles().length;
 
+  const commandTimeoutMs = (config.command_timeout && config.command_timeout > 0)
+    ? config.command_timeout * 1000
+    : 30000;
+
   const guard = new ExecutionGuard(
     workspaceRoot,
     state.activeAllowedPaths,
-    () => {}
+    () => {},
+    commandTimeoutMs
   );
 
   const sessionStore = new SessionStore(workspaceRoot);
