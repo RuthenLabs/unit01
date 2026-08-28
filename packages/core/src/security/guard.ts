@@ -576,8 +576,8 @@ export class ExecutionGuard {
         const redacted = redactSecrets(result);
         const truncated = truncateOutput(redacted);
 
-        // Record execution in loop detector
-        this.loopDetector.record(trimmedCommand, truncated);
+        // Record execution in loop detector with redacted command
+        this.loopDetector.record(redactSecrets(trimmedCommand), truncated);
 
         resolve(truncated);
       });

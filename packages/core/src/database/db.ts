@@ -52,9 +52,13 @@ export class IndexerDB {
     const home = homedir();
     let baseDir: string;
     if (process.platform === 'darwin') {
-      baseDir = path.join(home, 'Library', 'Application Support', 'com.nayalabs.unit01');
+      const newBase = path.join(home, 'Library', 'Application Support', 'com.ruthenlabs.unit01');
+      const legacyBase = path.join(home, 'Library', 'Application Support', 'com.nayalabs.unit01');
+      baseDir = fs.existsSync(legacyBase) && !fs.existsSync(newBase) ? legacyBase : newBase;
     } else {
-      baseDir = path.join(home, '.local', 'share', 'com.nayalabs.unit01');
+      const newBase = path.join(home, '.local', 'share', 'com.ruthenlabs.unit01');
+      const legacyBase = path.join(home, '.local', 'share', 'com.nayalabs.unit01');
+      baseDir = fs.existsSync(legacyBase) && !fs.existsSync(newBase) ? legacyBase : newBase;
     }
     const dbDir = path.join(baseDir, hash);
     if (!fs.existsSync(dbDir)) {
@@ -310,11 +314,6 @@ export class IndexerDB {
       'SELECT COUNT(*) as c FROM shadow_backups WHERE path_hash = ?'
     ).get(pathHash) as { c: number };
     return row?.c ?? 0;
-  }
-
-  /** @deprecated Use pushBackup instead. Kept for callers that haven't migrated yet. */
-  public upsertBackup(backup: ShadowBackupRecord) {
-    this.pushBackup(backup);
   }
 
   public removeBackup(pathHash: string) {

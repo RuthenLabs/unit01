@@ -10,7 +10,7 @@ import { execSync } from 'child_process';
 import { render } from 'ink';
 import React from 'react';
 
-import { DirectiveIndexer } from '@unit01/core/indexer/index.js';
+import { CodeIndexer } from '@unit01/core/indexer/index.js';
 import { ExecutionGuard, redactSecrets } from '@unit01/core/security/guard.js';
 import { ollama } from '@unit01/core/llm/client.js';
 import { buildRepoMap } from '@unit01/core/indexer/repomap.js';
@@ -798,7 +798,7 @@ async function main() {
   } catch (e) {}
   let thinkingEnabled = modelSupportsThinking;
 
-  const indexer = new DirectiveIndexer(workspaceRoot);
+  const indexer = new CodeIndexer(workspaceRoot);
   await indexer.initialize({ silent: true });
 
   let memoryStore: any = null;
