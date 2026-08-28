@@ -624,7 +624,7 @@ export async function handleToolCalls(
     const output = await guard.runCommand(cmd);
     ui.hideToolProgress();
 
-    if (output.startsWith('[DIRECTIVE AI]')) {
+    if (output.startsWith('[unit01]')) {
       ui.printToolResult('failure', `Ran: ${cmd} (blocked)`);
       ui.printSystemMessage('guard', `command blocked  ·  ${cmd}`);
       if (isPro()) {
