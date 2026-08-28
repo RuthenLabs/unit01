@@ -88,14 +88,14 @@ export class ShadowBackupManager {
     if (existing) {
       // If a backup already exists for oldPath, rename the backup record itself
       this.db.removeBackup(oldHash);
-      this.db.upsertBackup({
+      this.db.pushBackup({
         path_hash: newHash,
         original_path: newPath,
         content: existing.content
       });
     } else {
       // If no backup existed, create a rename backup record
-      this.db.upsertBackup({
+      this.db.pushBackup({
         path_hash: newHash,
         original_path: newPath,
         content: `__RENAMED_FROM__:${oldPath}`

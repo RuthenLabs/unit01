@@ -33,7 +33,7 @@ function computeHash(content: string): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-export class DirectiveIndexer {
+export class CodeIndexer {
   public db: IndexerDB;
   private watcher: FileWatcher | null = null;
   private workspaceRoot: string;
@@ -264,3 +264,5 @@ export class DirectiveIndexer {
     this.db.close();
   }
 }
+
+export { CodeIndexer as DirectiveIndexer };

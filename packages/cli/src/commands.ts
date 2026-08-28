@@ -5,8 +5,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
-import { DirectiveIndexer } from '@unit01/core/indexer/index.js';
-import { ExecutionGuard } from '@unit01/core/security/guard.js';
+import { CodeIndexer } from '@unit01/core/indexer/index.js';
+import { ExecutionGuard, redactSecrets } from '@unit01/core/security/guard.js';
 import { buildRepoMap } from '@unit01/core/indexer/repomap.js';
 import { AllowedPath } from '@unit01/core/security/types.js';
 import { ChunkRecord } from '@unit01/core/database/db.js';
@@ -117,7 +117,7 @@ async function requestPathAccess(
 export async function handleToolCalls(
   text: string,
   guard: ExecutionGuard,
-  indexer: DirectiveIndexer,
+  indexer: CodeIndexer,
   ui: UiAdapter,
   state: CliState,
   fileReadCache?: Map<string, string>
@@ -625,8 +625,9 @@ export async function handleToolCalls(
     ui.hideToolProgress();
 
     if (output.startsWith('[unit01]')) {
-      ui.printToolResult('failure', `Ran: ${cmd} (blocked)`);
-      ui.printSystemMessage('guard', `command blocked  ·  ${cmd}`);
+      const sanitizedCmd = redactSecrets(cmd);
+      ui.printToolResult('failure', `Ran: ${sanitizedCmd} (blocked)`);
+      ui.printSystemMessage('guard', `command blocked  ·  ${sanitizedCmd}`);
       if (isPro()) {
         try {
           const crypto = await import('crypto');
@@ -636,8 +637,8 @@ export async function handleToolCalls(
           auditStore.logAction({
             service: 'shell',
             operation: 'execute_script',
-            target: cmd,
-            payload_summary: `Command blocked by guard: ${cmd}`,
+            target: sanitizedCmd,
+            payload_summary: `Command blocked by guard: ${sanitizedCmd}`,
             payload_hash: payloadHash,
             status: 'denied'
           });
@@ -646,7 +647,7 @@ export async function handleToolCalls(
       return {
         toolRun: false,
         nextPrompt: '',
-        consoleOutput: `\n[Blocked: ${cmd}]`
+        consoleOutput: `\n[Blocked: ${sanitizedCmd}]`
       };
     }
 
@@ -713,7 +714,7 @@ export async function handleToolCalls(
         auditStore.logAction({
           service: 'shell',
           operation: 'execute_script',
-          target: cmd,
+          target: redactSecrets(cmd),
           payload_summary: outputResult.length > 100 ? outputResult.substring(0, 100) + '...' : outputResult,
           payload_hash: payloadHash,
           status: 'completed'
@@ -723,7 +724,7 @@ export async function handleToolCalls(
     return {
       toolRun: true,
       nextPrompt: `<tool_output>\n${outputResult}\n</tool_output>`,
-      consoleOutput: `\n[Command output executed: ${cmd}]`
+      consoleOutput: `\n[Command output executed: ${redactSecrets(cmd)}]`
     };
   }
 

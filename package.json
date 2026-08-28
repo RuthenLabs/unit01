@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["packages/*"],
   "version": "1.0.0",
-  "description": "Directive AI Indexer & Sandbox - Unit 01",
+  "description": "Unit 01 - Local Code Intelligence Engine",
   "type": "module",
   "main": "dist/packages/cli/src/index.js",
   "bin": {
