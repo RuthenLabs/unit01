@@ -23,7 +23,7 @@ const MAX_HISTORY = 50;
 
 const commands = [
   '/audit', '/autopilot', '/changes', '/clear', '/compact', '/connect',
-  '/exit', '/export', '/files', '/help', '/mcp',
+  '/exit', '/export', '/files', '/heal', '/help', '/mcp',
   '/models', '/overkill', '/personality', '/preview', '/quit',
   '/reindex', '/reset-password', '/search', '/sessions', '/status',
   '/thinking', '/undo'

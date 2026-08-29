@@ -773,6 +773,7 @@ async function main() {
 
   let sessionId: string = crypto.randomUUID();
   let autopilotEnabled = false;
+  let autopilotTestCommand: string | null = null;
   const sessionStartTime = Date.now();
   let lastInputTokens = 0;
   let pendingCompaction = false;
@@ -1372,7 +1373,7 @@ ${activeChanges}`;
 
         const helpItems = [
           { cmd: '/audit',       desc: 'view recent activity audit logs' },
-          { cmd: '/autopilot',   desc: 'toggle autopilot mode (plan-code-test-heal loop)' },
+          { cmd: '/autopilot, /heal [cmd]', desc: 'enable test-driven self-healing loop (e.g. /heal npm test)' },
           { cmd: '/changes',     desc: 'show recent file changes in the session' },
           { cmd: '/clear',       desc: 'clear conversation history' },
           { cmd: '/compact',     desc: 'save task checkpoint to compact history' },
@@ -2014,15 +2015,33 @@ ${activeChanges}`;
         return;
       }
 
-      if (command === '/autopilot') {
+      if (command === '/autopilot' || command === '/heal') {
+        if (arg.trim()) {
+          autopilotEnabled = true;
+          autopilotTestCommand = arg.trim();
+          ui.printSystemMessage('info', `🤖 Autopilot enabled with test command: "${autopilotTestCommand}"`);
+          return;
+        }
+
+        const detected = detectTestCommand(workspaceRoot);
+        const currentCmd = autopilotTestCommand || config.test_command || detected;
         const chosenIdx = await ui.interactiveSelect('Autopilot Mode:', [
-          `Enable Autopilot (Plan-Code-Test-Healing Loop)  ${autopilotEnabled ? '✓' : ''}`,
+          `Enable Autopilot (${currentCmd})  ${autopilotEnabled ? '✓' : ''}`,
+          `Set Custom Test Command (current: "${currentCmd}")`,
           `Disable Autopilot ${!autopilotEnabled ? '✓' : ''}`
         ]);
         if (chosenIdx === 0) {
           autopilotEnabled = true;
-          ui.printSystemMessage('info', '🤖 Autopilot enabled.');
+          autopilotTestCommand = currentCmd;
+          ui.printSystemMessage('info', `🤖 Autopilot enabled (${currentCmd}).`);
         } else if (chosenIdx === 1) {
+          const customCmd = await ui.interactiveInput('Enter verification/test command:', currentCmd);
+          if (customCmd.trim()) {
+            autopilotTestCommand = customCmd.trim();
+            autopilotEnabled = true;
+            ui.printSystemMessage('info', `🤖 Autopilot enabled with command: "${autopilotTestCommand}"`);
+          }
+        } else if (chosenIdx === 2) {
           autopilotEnabled = false;
           ui.printSystemMessage('info', '🤖 Autopilot disabled.');
         }
@@ -2749,7 +2768,7 @@ ${toolLines.join('\n')}\n`);
                             ));
         
         if (autopilotEnabled && toolResult.toolRun && hasEditedFiles) {
-          const testCommand = config.test_command || detectTestCommand(workspaceRoot);
+          const testCommand = autopilotTestCommand || config.test_command || detectTestCommand(workspaceRoot);
           if (isPro()) {
             ui.printSystemMessage('info', `🤖 [Autopilot] Starting structured build pipeline: "${testCommand}"...`);
             try {
