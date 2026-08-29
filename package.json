@@ -5,9 +5,9 @@
   "version": "1.0.0",
   "description": "Unit 01 - Local Code Intelligence Engine",
   "type": "module",
-  "main": "dist/packages/cli/src/index.js",
+  "main": "dist/index.js",
   "bin": {
-    "u01": "./dist/packages/cli/src/index.js"
+    "u01": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
