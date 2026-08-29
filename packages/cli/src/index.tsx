@@ -2606,6 +2606,18 @@ ${toolLines.join('\n')}\n`);
         }
       } catch (_) {}
 
+      let semanticContextBlock = '';
+      if (isPro()) {
+        try {
+          const lastUserMsg = [...conversationHistory].reverse().find(m => m.role === 'user');
+          if (lastUserMsg && typeof lastUserMsg.content === 'string') {
+            const { generateSemanticContextBlock } = await import('@unit01/pro/search/index.js');
+            const block = await generateSemanticContextBlock(indexer.db, lastUserMsg.content);
+            if (block) semanticContextBlock = block;
+          }
+        } catch (_) {}
+      }
+
       const systemEnvBlock = `\n\n[System Environment]
 - Workspace Root Path: ${workspaceRoot}
 - User Home Directory: ${os.homedir()}
@@ -2613,7 +2625,7 @@ ${toolLines.join('\n')}\n`);
 
       const systemMessage = {
         role: 'system',
-        content: `${SYSTEM_INSTRUCTIONS}${systemEnvBlock}\n\n[Repo Map]\n${currentRepoMap}\n${currentChanges}${memoryContext}${mcpToolsBlock}`
+        content: `${SYSTEM_INSTRUCTIONS}${systemEnvBlock}\n\n[Repo Map]\n${currentRepoMap}\n${currentChanges}${memoryContext}${semanticContextBlock}${mcpToolsBlock}`
       };
 
       const activePayload = [systemMessage, ...conversationHistory];
