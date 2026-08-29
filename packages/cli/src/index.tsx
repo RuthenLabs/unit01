@@ -424,6 +424,7 @@ RULES:
 - NEVER re-call a tool whose output already appears in the conversation history. If data was fetched (e.g. github_list_repos, slack_get_history), read it from context and answer directly.
 - NEVER tell the user to run /connect for a service if a tool call for that service already returned data in this session. Trust the tool results in history.
 - read_file is for LOCAL files only. Never pass a URL, GitHub link, or any http:// path to read_file. Use fetch_webpage for URLs, github_get_contents for GitHub file content.
+- When calling run_command, always pass non-interactive flags where available (e.g., "npm init -y", "npx --yes", "apt-get -y", "git commit -m ..."). Never invoke commands that open interactive wizard prompts.
 - NEVER use generic placeholders like "/path/to/", "current/directory/path", "yourusername", or "/home/yourusername" in tool paths. Instead, look at the absolute paths provided in the [System Environment] block (e.g. Workspace Root Path, User Home Directory) and use the real, actual paths of the target folders on the machine.`;
 
 function estimateTokens(text: string): number {

@@ -62,6 +62,17 @@ export function isBlacklisted(command: string): boolean {
   return false;
 }
 
+export function ensureNonInteractiveFlags(command: string): string {
+  let cmd = command;
+  // npm init (without -y or --yes) -> npm init -y
+  cmd = cmd.replace(/\bnpm\s+init(?!\s+(?:-y|--yes|\S+))\b/g, 'npm init -y');
+  // npx without -y or --yes -> npx -y
+  cmd = cmd.replace(/\bnpx\s+(?!-y\b|--yes\b)/g, 'npx -y ');
+  // yarn init (without -y or --yes) -> yarn init -y
+  cmd = cmd.replace(/\byarn\s+init(?!\s+(?:-y|--yes|\S+))\b/g, 'yarn init -y');
+  return cmd;
+}
+
 export class LoopDetector {
   private commandHistory: string[] = [];
   private outputHistory: string[] = [];
@@ -498,14 +509,23 @@ export class ExecutionGuard {
       return '[unit01] Loop detected — same command ran 3 times with same result. Stop and try a different approach.';
     }
 
-    // 4. Set up resource limit ulimit prefix
+    // 4. Set up resource limit ulimit prefix and non-interactive flags
+    const nonInteractiveCommand = ensureNonInteractiveFlags(trimmedCommand);
     const ulimitPrefix = 'ulimit -n 2048';
-    const innerCommand = `${ulimitPrefix} && ${trimmedCommand}`;
+    const innerCommand = `${ulimitPrefix} && ${nonInteractiveCommand}`;
 
-    // 5. Execute on host shell
+    // 5. Execute on host shell with non-interactive environment variables
     const execCommand = '/bin/sh';
     const execArgs = ['-c', innerCommand];
-    const env = { ...process.env };
+    const env = {
+      ...process.env,
+      CI: 'true',
+      DEBIAN_FRONTEND: 'noninteractive',
+      GIT_TERMINAL_PROMPT: '0',
+      NONINTERACTIVE: '1',
+      npm_config_yes: 'true',
+      TERM: 'xterm-256color'
+    };
 
     const timeoutMs = (customTimeoutMs && customTimeoutMs > 0) ? customTimeoutMs : this.commandTimeoutMs;
     const timeoutSec = Math.max(1, Math.round(timeoutMs / 1000));
