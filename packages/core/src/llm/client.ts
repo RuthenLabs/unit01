@@ -1,5 +1,3 @@
-import { execSync } from 'child_process';
-
 export interface OllamaModel {
   name: string;
   details: {

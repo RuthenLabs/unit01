@@ -52,13 +52,9 @@ export class IndexerDB {
     const home = homedir();
     let baseDir: string;
     if (process.platform === 'darwin') {
-      const newBase = path.join(home, 'Library', 'Application Support', 'com.ruthenlabs.unit01');
-      const legacyBase = path.join(home, 'Library', 'Application Support', 'com.nayalabs.unit01');
-      baseDir = fs.existsSync(legacyBase) && !fs.existsSync(newBase) ? legacyBase : newBase;
+      baseDir = path.join(home, 'Library', 'Application Support', 'com.ruthenlabs.unit01');
     } else {
-      const newBase = path.join(home, '.local', 'share', 'com.ruthenlabs.unit01');
-      const legacyBase = path.join(home, '.local', 'share', 'com.nayalabs.unit01');
-      baseDir = fs.existsSync(legacyBase) && !fs.existsSync(newBase) ? legacyBase : newBase;
+      baseDir = path.join(home, '.local', 'share', 'com.ruthenlabs.unit01');
     }
     const dbDir = path.join(baseDir, hash);
     if (!fs.existsSync(dbDir)) {
