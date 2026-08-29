@@ -32,9 +32,9 @@ export class SessionStore {
     this.workspaceHash = crypto.createHash('sha256').update(this.workspaceRoot).digest('hex');
     const home = homedir();
     if (process.platform === 'darwin') {
-      this.baseDir = path.join(home, 'Library', 'Application Support', 'com.nayalabs.unit01');
+      this.baseDir = path.join(home, 'Library', 'Application Support', 'com.ruthenlabs.unit01');
     } else {
-      this.baseDir = path.join(home, '.local', 'share', 'com.nayalabs.unit01');
+      this.baseDir = path.join(home, '.local', 'share', 'com.ruthenlabs.unit01');
     }
     this.sessionsDir = path.join(this.baseDir, this.workspaceHash, 'sessions');
     if (!fs.existsSync(this.sessionsDir)) {
@@ -96,9 +96,9 @@ export class SessionStore {
     
     let baseDir: string;
     if (process.platform === 'darwin') {
-      baseDir = path.join(home, 'Library', 'Application Support', 'com.nayalabs.unit01');
+      baseDir = path.join(home, 'Library', 'Application Support', 'com.ruthenlabs.unit01');
     } else {
-      baseDir = path.join(home, '.local', 'share', 'com.nayalabs.unit01');
+      baseDir = path.join(home, '.local', 'share', 'com.ruthenlabs.unit01');
     }
     
     const targetDir = path.join(baseDir, hash, 'sessions');

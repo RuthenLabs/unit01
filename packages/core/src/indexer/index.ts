@@ -264,5 +264,3 @@ export class CodeIndexer {
     this.db.close();
   }
 }
-
-export { CodeIndexer as DirectiveIndexer };
