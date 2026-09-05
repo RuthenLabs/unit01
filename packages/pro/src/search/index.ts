@@ -82,3 +82,29 @@ export async function executeHybridSearch(db: IndexerDB, query: string): Promise
   // 5. Return top 5 fusion ranked chunks
   return fusedList.slice(0, 5);
 }
+
+/**
+ * Proactively generate a semantic context block containing relevant code chunks
+ * for a user query. Returns null if no matches are found.
+ */
+export async function generateSemanticContextBlock(
+  db: IndexerDB,
+  userQuery: string,
+  maxChunks: number = 3
+): Promise<string | null> {
+  if (!userQuery || userQuery.trim().length < 4) return null;
+
+  try {
+    const results = await executeHybridSearch(db, userQuery.trim());
+    if (!results || results.length === 0) return null;
+
+    const top = results.slice(0, maxChunks);
+    const snippets = top.map(r => 
+      `- ${r.relpath} (Lines ${r.start_line}-${r.end_line}, ${r.chunk_type} "${r.name}"):\n\`\`\`\n${r.content.trim()}\n\`\`\``
+    ).join('\n\n');
+
+    return `\n\n[Relevant Code Context]\n${snippets}`;
+  } catch {
+    return null;
+  }
+}

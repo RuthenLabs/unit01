@@ -334,6 +334,14 @@ export function formatToolCallToXml(tc: any): string {
   }
 }
 
+export function cleanModelResponse(text: string): string {
+  let cleaned = text.replace(/```(?:xml|json|html|plaintext|text)?\s*([\s\S]*?)```/gi, '$1').trim();
+  cleaned = cleaned.replace(/(?:^|\s|<)file\s+([^>]+)>/gi, '<write_file $1>');
+  cleaned = cleaned.replace(/<\/file>/gi, '</write_file>');
+  cleaned = cleaned.replace(/(?:^|\s)(write_file|patch_file|patch_file_blocks|read_file|delete_file|run_command|make_dir|copy_file|move_file|view_outline)\s+([^>]+)>/gi, '<$1 $2>');
+  return cleaned;
+}
+
 export const SYSTEM_INSTRUCTIONS = `You are Unit01, a local-first AI coding agent. You act by outputting ONE XML tool tag at a time. You NEVER write explanations, preambles, or conversational text before a tool call. You write the tag and stop.
 
 TOOLS (use exactly as shown — real paths, not placeholders):

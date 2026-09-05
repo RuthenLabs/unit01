@@ -13,19 +13,31 @@ export interface SlashContext {
   sessionStore: SessionStore;
   sessionId: string;
   sessionStartTime: number;
-  conversationHistory: { role: string; content: string }[];
+  conversationHistory: any[];
   activeModel: string;
   setActiveModel: (model: string) => void;
   activePersonality: string;
   setActivePersonality: (p: string) => void;
   userContextLimit: number;
   modelContextWindow: number;
+  setModelContextWindow: (w: number) => void;
   lastInputTokens: number;
   setLastInputTokens: (t: number) => void;
   setSessionId: (id: string) => void;
-  runCompaction: (ui: UiAdapter, notifyOnly?: boolean) => Promise<void>;
+  runCompaction: (ui: UiAdapter, notifyOnly?: boolean) => Promise<boolean | void>;
   resumeSession: (ui: UiAdapter, session: SessionData) => Promise<void>;
   recalcContextAndRender?: () => void;
   activeAbortController: AbortController | null;
   setActiveAbortController: (ac: AbortController | null) => void;
+  config: Record<string, any>;
+  gitBranch: string;
+  memoryStore?: any;
+  thinkingEnabled: boolean;
+  setThinkingEnabled: (t: boolean) => void;
+  autopilotEnabled: boolean;
+  setAutopilotEnabled: (a: boolean) => void;
+  autopilotTestCommand: string | null;
+  setAutopilotTestCommand: (cmd: string | null) => void;
 }
+
+export type SlashHandler = (command: string, arg: string, ctx: SlashContext) => Promise<boolean>;
