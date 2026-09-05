@@ -6,7 +6,6 @@ import { getServiceToken } from '@unit01/core/tier.js';
 
 const FREE_QUOTA_FILE = path.join(homedir(), '.unit01', 'free_search_quota.json');
 const GLOBAL_CONFIG_FILE = path.join(homedir(), '.unit01', 'config.json');
-const themeAccent = chalk.hex('#38BDF8');
 
 // ── Fetch timeout helper (10 seconds) ────────────────────────────────────────
 function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
@@ -40,10 +39,8 @@ export function getSearchProvider(): string {
   return 'auto'; // auto = use whichever key is connected, prefer first connected
 }
 
-import { isScraplingAvailable, executeScraplingSearch, executeScraplingFetch } from './scrapling.js';
-
 export function setSearchProvider(provider: string): void {
-  const validProviders = ['scrapling', 'tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
+  const validProviders = ['tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
   if (!validProviders.includes(provider)) {
     throw new Error(`Invalid provider "${provider}". Valid options: ${validProviders.join(', ')}`);
   }
@@ -320,7 +317,7 @@ export async function scrapeWithJina(url: string, apiKey: string): Promise<strin
 }
 
 /**
- * Execute webpage content fetching (using Jina, native Scrapling stealth, or clean HTML fallback).
+ * Execute webpage content fetching (using Jina, or clean HTML fallback).
  */
 export async function executeFetchWebpage(url: string): Promise<string> {
   const jinaKey = getServiceToken('jina');
@@ -330,15 +327,6 @@ export async function executeFetchWebpage(url: string): Promise<string> {
       if (content) return content;
     } catch (_) {}
   }
-
-  // ── Native Scrapling Stealth Fetcher (Bypasses anti-bot & generates clean Markdown) ──
-  try {
-    const scraplingReady = await isScraplingAvailable();
-    if (scraplingReady) {
-      const markdown = await executeScraplingFetch(url);
-      if (markdown && markdown.trim()) return markdown;
-    }
-  } catch (_) {}
 
   // ── High-speed TypeScript HTML Fallback ──
   try {
@@ -363,7 +351,7 @@ export async function executeFetchWebpage(url: string): Promise<string> {
 
 /**
  * Execute a web search using the user's chosen provider.
- * Supports Scrapling stealth search, API keys (Tavily, Brave, Exa, Serper), or DuckDuckGo fallback.
+ * Supports API keys (Tavily, Brave, Exa, Serper), or DuckDuckGo fallback.
  */
 export async function executeWebSearch(query: string): Promise<SearchResult[]> {
   const tavilyKey = getServiceToken('tavily');
@@ -375,30 +363,8 @@ export async function executeWebSearch(query: string): Promise<SearchResult[]> {
   const searchLimit = getSearchLimit();
   const chosenProvider = getSearchProvider();
 
-  // ── Explicit Scrapling provider ──
-  if (chosenProvider === 'scrapling') {
-    try {
-      if (await isScraplingAvailable()) {
-        return await executeScraplingSearch(query, searchLimit);
-      }
-    } catch (err: any) {
-      console.warn(chalk.yellow(`[Search] Scrapling stealth search failed: ${err.message}. Falling back to DuckDuckGo.`));
-    }
-    return await searchDuckDuckGo(query, searchLimit);
-  }
-
-  // ── Zero-key mode: Scrapling stealth search as primary free engine ──
+  // ── Zero-key mode: Fallback to DuckDuckGo lite with free daily quota check ──
   if (!hasAnyKey) {
-    try {
-      if (await isScraplingAvailable()) {
-        const scraplingResults = await executeScraplingSearch(query, searchLimit);
-        if (scraplingResults && scraplingResults.length > 0) {
-          return scraplingResults;
-        }
-      }
-    } catch (_) {}
-
-    // Fallback to DuckDuckGo lite with free daily quota check
     const quota = checkFreeQuota();
     if (!quota.allowed) {
       return [{
@@ -419,7 +385,6 @@ export async function executeWebSearch(query: string): Promise<SearchResult[]> {
         case 'brave':     return braveKey   ? await searchBrave(query, braveKey, searchLimit)     : null;
         case 'exa':       return exaKey     ? await searchExa(query, exaKey, searchLimit)         : null;
         case 'serper':    return serperKey  ? await searchSerper(query, serperKey, searchLimit)   : null;
-        case 'scrapling': return (await isScraplingAvailable()) ? await executeScraplingSearch(query, searchLimit) : null;
         default:          return null;
       }
     } catch (err: any) {
@@ -441,13 +406,6 @@ export async function executeWebSearch(query: string): Promise<SearchResult[]> {
   if (braveKey)   { const r = await runProvider('brave');   if (r) return r; }
   if (exaKey)     { const r = await runProvider('exa');     if (r) return r; }
   if (serperKey)  { const r = await runProvider('serper');  if (r) return r; }
-
-  // Default to Scrapling if available, else DuckDuckGo
-  try {
-    if (await isScraplingAvailable()) {
-      return await executeScraplingSearch(query, searchLimit);
-    }
-  } catch (_) {}
 
   return await searchDuckDuckGo(query, searchLimit);
 }
