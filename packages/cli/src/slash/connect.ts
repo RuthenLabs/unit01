@@ -10,7 +10,7 @@ export async function handleConnectCommands(command: string, arg: string, ctx: S
       ui.printSystemMessage('error', 'Web search configuration is a Pro tier feature. Upgrade to Pro to configure search integration.');
       return true;
     }
-    const PROVIDERS = ['tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
+    const PROVIDERS = ['scrapling', 'tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
     const argTrimmed = arg ? arg.trim().toLowerCase() : '';
 
     if (argTrimmed.startsWith('limit ')) {
