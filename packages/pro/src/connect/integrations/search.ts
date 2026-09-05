@@ -40,8 +40,10 @@ export function getSearchProvider(): string {
   return 'auto'; // auto = use whichever key is connected, prefer first connected
 }
 
+import { isScraplingAvailable, executeScraplingSearch, executeScraplingFetch } from './scrapling.js';
+
 export function setSearchProvider(provider: string): void {
-  const validProviders = ['tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
+  const validProviders = ['scrapling', 'tavily', 'brave', 'exa', 'serper', 'duckduckgo', 'auto'];
   if (!validProviders.includes(provider)) {
     throw new Error(`Invalid provider "${provider}". Valid options: ${validProviders.join(', ')}`);
   }
@@ -318,7 +320,7 @@ export async function scrapeWithJina(url: string, apiKey: string): Promise<strin
 }
 
 /**
- * Execute webpage content fetching (using Jina Reader API with a clean HTML fallback).
+ * Execute webpage content fetching (using Jina, native Scrapling stealth, or clean HTML fallback).
  */
 export async function executeFetchWebpage(url: string): Promise<string> {
   const jinaKey = getServiceToken('jina');
@@ -328,7 +330,17 @@ export async function executeFetchWebpage(url: string): Promise<string> {
       if (content) return content;
     } catch (_) {}
   }
-  
+
+  // ── Native Scrapling Stealth Fetcher (Bypasses anti-bot & generates clean Markdown) ──
+  try {
+    const scraplingReady = await isScraplingAvailable();
+    if (scraplingReady) {
+      const markdown = await executeScraplingFetch(url);
+      if (markdown && markdown.trim()) return markdown;
+    }
+  } catch (_) {}
+
+  // ── High-speed TypeScript HTML Fallback ──
   try {
     const response = await fetchWithTimeout(url, {
       headers: {
@@ -337,7 +349,6 @@ export async function executeFetchWebpage(url: string): Promise<string> {
     });
     if (!response.ok) throw new Error(`HTTP status ${response.status}`);
     const text = await response.text();
-    // Resilient HTML stripping fallback
     const clean = text
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -352,21 +363,42 @@ export async function executeFetchWebpage(url: string): Promise<string> {
 
 /**
  * Execute a web search using the user's chosen provider.
- * No waterfall — the user picks what they want via /search <provider>.
- * Falls back to DuckDuckGo only on error, with a clear message.
+ * Supports Scrapling stealth search, API keys (Tavily, Brave, Exa, Serper), or DuckDuckGo fallback.
  */
 export async function executeWebSearch(query: string): Promise<SearchResult[]> {
   const tavilyKey = getServiceToken('tavily');
   const braveKey  = getServiceToken('brave');
   const exaKey    = getServiceToken('exa');
   const serperKey = getServiceToken('serper');
-  // NOTE: Jina is intentionally NOT included here — it's a scraper, not a search engine.
 
   const hasAnyKey = !!(tavilyKey || braveKey || exaKey || serperKey);
   const searchLimit = getSearchLimit();
+  const chosenProvider = getSearchProvider();
 
-  // Free Tier Daily search limit enforcement (only when no custom keys connected)
+  // ── Explicit Scrapling provider ──
+  if (chosenProvider === 'scrapling') {
+    try {
+      if (await isScraplingAvailable()) {
+        return await executeScraplingSearch(query, searchLimit);
+      }
+    } catch (err: any) {
+      console.warn(chalk.yellow(`[Search] Scrapling stealth search failed: ${err.message}. Falling back to DuckDuckGo.`));
+    }
+    return await searchDuckDuckGo(query, searchLimit);
+  }
+
+  // ── Zero-key mode: Scrapling stealth search as primary free engine ──
   if (!hasAnyKey) {
+    try {
+      if (await isScraplingAvailable()) {
+        const scraplingResults = await executeScraplingSearch(query, searchLimit);
+        if (scraplingResults && scraplingResults.length > 0) {
+          return scraplingResults;
+        }
+      }
+    } catch (_) {}
+
+    // Fallback to DuckDuckGo lite with free daily quota check
     const quota = checkFreeQuota();
     if (!quota.allowed) {
       return [{
@@ -379,17 +411,16 @@ export async function executeWebSearch(query: string): Promise<SearchResult[]> {
     return await searchDuckDuckGo(query, searchLimit);
   }
 
-  // ── User-selected provider ──────────────────────────────────────────────────
-  const chosenProvider = getSearchProvider();
-
+  // ── User-selected provider with connected API keys ──
   const runProvider = async (provider: string): Promise<SearchResult[] | null> => {
     try {
       switch (provider) {
-        case 'tavily':  return tavilyKey  ? await searchTavily(query, tavilyKey, searchLimit)   : null;
-        case 'brave':   return braveKey   ? await searchBrave(query, braveKey, searchLimit)     : null;
-        case 'exa':     return exaKey     ? await searchExa(query, exaKey, searchLimit)         : null;
-        case 'serper':  return serperKey  ? await searchSerper(query, serperKey, searchLimit)   : null;
-        default:        return null;
+        case 'tavily':    return tavilyKey  ? await searchTavily(query, tavilyKey, searchLimit)   : null;
+        case 'brave':     return braveKey   ? await searchBrave(query, braveKey, searchLimit)     : null;
+        case 'exa':       return exaKey     ? await searchExa(query, exaKey, searchLimit)         : null;
+        case 'serper':    return serperKey  ? await searchSerper(query, serperKey, searchLimit)   : null;
+        case 'scrapling': return (await isScraplingAvailable()) ? await executeScraplingSearch(query, searchLimit) : null;
+        default:          return null;
       }
     } catch (err: any) {
       console.warn(chalk.yellow(`[Search] Provider "${provider}" failed: ${err.message}`));
@@ -401,16 +432,22 @@ export async function executeWebSearch(query: string): Promise<SearchResult[]> {
   if (chosenProvider !== 'auto' && chosenProvider !== 'duckduckgo') {
     const results = await runProvider(chosenProvider);
     if (results) return results;
-    // Provider failed — tell the user and fall back
     console.warn(chalk.yellow(`[Search] Configured provider "${chosenProvider}" failed or key not connected. Falling back to DuckDuckGo.`));
     return await searchDuckDuckGo(query, searchLimit);
   }
 
-  // "auto" mode — use whichever single key is connected (still no waterfall, first connected wins)
+  // "auto" mode — use whichever single key is connected
   if (tavilyKey)  { const r = await runProvider('tavily');  if (r) return r; }
   if (braveKey)   { const r = await runProvider('brave');   if (r) return r; }
   if (exaKey)     { const r = await runProvider('exa');     if (r) return r; }
   if (serperKey)  { const r = await runProvider('serper');  if (r) return r; }
+
+  // Default to Scrapling if available, else DuckDuckGo
+  try {
+    if (await isScraplingAvailable()) {
+      return await executeScraplingSearch(query, searchLimit);
+    }
+  } catch (_) {}
 
   return await searchDuckDuckGo(query, searchLimit);
 }
