@@ -33,7 +33,14 @@ export function getSearchProvider(): string {
   try {
     if (fs.existsSync(GLOBAL_CONFIG_FILE)) {
       const conf = JSON.parse(fs.readFileSync(GLOBAL_CONFIG_FILE, 'utf-8'));
-      if (conf?.search_provider) return conf.search_provider as string;
+      if (conf?.search_provider) {
+        const provider = conf.search_provider as string;
+        const keyRequiredProviders = ['tavily', 'brave', 'exa', 'serper'];
+        if (keyRequiredProviders.includes(provider) && !getServiceToken(provider)) {
+          return 'auto';
+        }
+        return provider;
+      }
     }
   } catch {}
   return 'auto'; // auto = use whichever key is connected, prefer first connected

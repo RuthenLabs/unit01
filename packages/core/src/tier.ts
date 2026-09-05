@@ -56,6 +56,11 @@ export function deletePlaintextToken(service: string): void {
       modified = true;
     }
   }
+  const cleanSvc = service.replace(/-token$/, '');
+  if ((conf as any).search_provider === cleanSvc) {
+    delete (conf as any).search_provider;
+    modified = true;
+  }
   if (modified) {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(conf, null, 2), { mode: 0o600 });
   }
